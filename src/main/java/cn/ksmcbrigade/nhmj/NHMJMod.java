@@ -19,7 +19,7 @@ import java.lang.instrument.UnmodifiableClassException;
 @Mod(NHMJMod.MODID)
 public class NHMJMod {
     public static final String MODID = "nhmj";
-    private static final Logger LOGGER = LogUtils.getLogger();
+    public static final Logger LOGGER = LogUtils.getLogger();
 
     public NHMJMod(IEventBus modEventBus, ModContainer modContainer) throws UnmodifiableClassException {
         MixinAgentUtils.getInst().addTransformer(new DeferredMixinConfigRegistrationTransformer(),true);

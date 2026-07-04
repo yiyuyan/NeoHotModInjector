@@ -1,7 +1,10 @@
 package cn.ksmcbrigade.nhmj.utils;
 
+import cn.ksmcbrigade.mr.utils.UnsafeUtils;
+import cn.ksmcbrigade.nhmj.NHMJMod;
 import com.terraformersmc.mod_menu.ModMenu;
 import com.terraformersmc.mod_menu.util.mod.neoforge.NeoforgeMod;
+import cpw.mods.cl.JarModuleFinder;
 import cpw.mods.jarhandling.JarContents;
 import cpw.mods.jarhandling.SecureJar;
 import cpw.mods.modlauncher.Launcher;
@@ -29,12 +32,26 @@ import org.spongepowered.asm.mixin.Mixins;
 import org.spongepowered.asm.mixin.extensibility.IMixinConfig;
 import org.spongepowered.asm.mixin.transformer.Config;
 
+import cn.ksmcbrigade.mr.utils.UnsafeUtils.*;
+
+import java.io.IOException;
+import java.io.InputStream;
+import java.lang.module.Configuration;
+import java.lang.module.ModuleReader;
+import java.lang.module.ModuleReference;
+import java.lang.module.ResolvedModule;
+import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
+import java.net.URI;
 import java.nio.file.Path;
 import java.util.*;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
+
+import static cn.ksmcbrigade.mr.utils.UnsafeUtils.getFieldValue;
+import static cn.ksmcbrigade.mr.utils.UnsafeUtils.setFieldValue;
 
 public class Injector {
 
@@ -73,6 +90,12 @@ public class Injector {
                 addLayerM.invoke(handler, IModuleLayerManager.Layer.GAME,file.getFile().getSecureJar());
             }
         }
+
+        for (Module module : FMLLoader.getGameLayer().modules()) {
+            NHMJMod.LOGGER.info("Module: {} - {} - {} - {} - {} - {} - {} - {}",module.getName(),module.getClassLoader(),module.getAnnotations(),module.getLayer(),module.getDescriptor(),module.getPackages(),module.isNamed(), module);
+        }
+
+        addToGameLayer(loadingModList);
 
         List<ModContainer> containerList = loadingModList.getModFiles().stream()
                 .map(ModFileInfo::getFile)
@@ -150,6 +173,71 @@ public class Injector {
             modContainer.acceptEvent(new FMLConstructModEvent(modContainer, workQueue));
             ModMenu.MODS.put(modContainer.getModId(),new NeoforgeMod(modContainer));
             ModLoadingContext.get().setActiveContainer(null);
+        }
+    }
+
+    private static void addToGameLayer(LoadingModList loadingModList) throws NoSuchMethodException, InvocationTargetException, InstantiationException, IllegalAccessException {
+        for (ModFileInfo modFile : loadingModList.getModFiles()) {
+            SecureJar secureJar = modFile.getFile().getSecureJar();
+            String target = secureJar.name();
+            InjectedJarModuleReference resolvedModule = new InjectedJarModuleReference(secureJar.moduleDataProvider());
+            Constructor<ResolvedModule> moduleConstructor = ResolvedModule.class.getDeclaredConstructor(Configuration.class,ModuleReference.class);
+            moduleConstructor.setAccessible(true);
+            Module
+            ResolvedModule module = moduleConstructor.newInstance(FMLLoader.getGameLayer().configuration(),resolvedModule);
+           Map<String,Module> namedModule = UnsafeUtils.getFieldValue(FMLLoader.getGameLayer(),"nameToModule",Map.class);
+           namedModule.put(target,module);
+        }
+    }
+
+    static class InjectedJarModuleReference extends ModuleReference {
+        private final SecureJar.ModuleDataProvider jar;
+
+        InjectedJarModuleReference(final SecureJar.ModuleDataProvider jar) {
+            super(jar.descriptor(), jar.uri());
+            this.jar = jar;
+        }
+
+        @Override
+        public ModuleReader open() throws IOException {
+            return new InjectedJarModuleReader(this.jar);
+        }
+
+        public SecureJar.ModuleDataProvider jar() {
+            return this.jar;
+        }
+    }
+
+    static class InjectedJarModuleReader implements ModuleReader {
+        private final SecureJar.ModuleDataProvider jar;
+
+        public InjectedJarModuleReader(final SecureJar.ModuleDataProvider jar) {
+            this.jar = jar;
+        }
+
+        @Override
+        public Optional<URI> find(final String name) throws IOException {
+            return jar.findFile(name);
+        }
+
+        @Override
+        public Optional<InputStream> open(final String name) throws IOException {
+            return jar.open(name);
+        }
+
+        @Override
+        public Stream<String> list() throws IOException {
+            return null;
+        }
+
+        @Override
+        public void close() throws IOException {
+
+        }
+
+        @Override
+        public String toString() {
+            return this.getClass().getName() + "[jar=" + jar + "]";
         }
     }
 }
