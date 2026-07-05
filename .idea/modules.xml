@@ -3,6 +3,7 @@
   <component name="ProjectModuleManager">
     <modules>
       <module fileurl="file://$PROJECT_DIR$/.idea/modules/NeoHotModInjector.main.iml" filepath="$PROJECT_DIR$/.idea/modules/NeoHotModInjector.main.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/build.gradle.iml" filepath="$PROJECT_DIR$/.idea/build.gradle.iml" />
     </modules>
   </component>
 </project>
