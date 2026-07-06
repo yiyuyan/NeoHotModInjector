@@ -9,11 +9,9 @@ import cpw.mods.cl.JarModuleFinder;
 import cpw.mods.cl.ModuleClassLoader;
 import cpw.mods.jarhandling.JarContents;
 import cpw.mods.jarhandling.SecureJar;
-import net.minecraft.client.gui.screens.TitleScreen;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.fml.*;
 import net.neoforged.fml.event.lifecycle.FMLConstructModEvent;
-import net.neoforged.fml.javafmlmod.FMLModContainer;
 import net.neoforged.fml.loading.FMLLoader;
 import net.neoforged.fml.loading.LoadingModList;
 import net.neoforged.fml.loading.UniqueModListBuilder;
@@ -77,20 +75,6 @@ public class Injector {
         LoadingModList loadingModList = backgroundScanHandler.getLoadingModList();
 
         addToGameLayer(loadingModList);
-
-        ModuleUtils.openAllModules();
-
-        for (Module module : FMLLoader.getGameLayer().modules()) {
-            NHMJMod.LOGGER.info("Module: name:{} - classloader:{} - annotations:{} - layer:{} - descriptor:{} - packages:{} - named:{} - module:{}",
-                    module.getName(),
-                    module.getClassLoader(),
-                    module.getAnnotations(),
-                    module.getLayer(),
-                    module.getDescriptor(),
-                    module.getPackages(),
-                    module.isNamed(),
-                    module);
-        }
 
         List<ModContainer> containerList = loadingModList.getModFiles().stream()
                 .map(ModFileInfo::getFile)
@@ -170,19 +154,10 @@ public class Injector {
             ModMenu.MODS.put(modContainer.getModId(),new NeoforgeMod(modContainer));
             ModLoadingContext.get().setActiveContainer(null);
         }
-
-        if(!FMLLoader.isProduction()) testExampleMod();
     }
 
     private static void testExampleMod() throws NoSuchMethodException, InvocationTargetException, InstantiationException, IllegalAccessException, ClassNotFoundException {
-        ModContainer container = ModList.get().getModContainerById("examplemod").orElseThrow();
-        IEventBus eventBus = container.getEventBus();
-        Class<?> clazz = Class.forName("cn.ksmcbrigade.examplemod.Examplemod");
-        Constructor<?> constructor = clazz.getDeclaredConstructor(IEventBus.class, ModContainer.class);
-        constructor.setAccessible(true);
-        ModLoadingContext.get().setActiveContainer(container);
-        constructor.newInstance(eventBus,container);
-        ModLoadingContext.get().setActiveContainer(null);
+
     }
 
     private static void addToGameLayer(LoadingModList loadingModList) throws Throwable {
@@ -206,6 +181,7 @@ public class Injector {
             Map<String,ResolvedModule> configurationNameToModules = getFieldValue(FMLLoader.getGameLayer().configuration(),"nameToModule",Map.class);
 
             Map<String, Object> resolvedRoots = getFieldValueWithTargetClass(ModuleClassLoader.class,moduleClassLoader,"resolvedRoots",Map.class);
+            Map<String, ResolvedModule> packageLookup = getFieldValueWithTargetClass(ModuleClassLoader.class,moduleClassLoader,"packageLookup",Map.class);
 
             Set<Module> moduleSet = new HashSet<>();
             moduleSet.addAll(FMLLoader.getGameLayer().modules());
@@ -219,11 +195,24 @@ public class Injector {
             HashMap<String,Object> newResolvedRoots = new HashMap<>();
             newResolvedRoots.putAll(resolvedRoots);
 
+            HashMap<String,Object> newPackageLookup = new HashMap<>();
+            if(packageLookup!=null){
+                newPackageLookup.putAll(packageLookup);
+            }
+            else{
+                NHMJMod.LOGGER.warn("The packageLookup is null.");
+                for (ResolvedModule module : FMLLoader.getGameLayer().configuration().modules()) {
+                    for (String aPackage : module.reference().descriptor().packages()) {
+                        newPackageLookup.put(aPackage,module);
+                    }
+                }
+            }
+
             for (ModuleReference moduleReference : moduleReferences) {
                 Module module = moduleConstructor.newInstance(FMLLoader.getGameLayer(),moduleClassLoader,moduleReference.descriptor(),moduleReference.location().orElseThrow());
                 ResolvedModule resolvedModule = resolvedModuleConstructor.newInstance(FMLLoader.getGameLayer().configuration(),moduleReference);
 
-                addReadsForModule(module);
+                ModuleUtilsAccess.redefineModuleToAddAllReads(module);
 
                 moduleSet.add(module);
                 namedModule.put(moduleReference.descriptor().name(),module);
@@ -233,6 +222,9 @@ public class Injector {
                 newConfigurationNameToModules.put(target,resolvedModule);
 
                 newResolvedRoots.put(moduleReference.descriptor().name(),moduleReference);
+                for (String aPackage : moduleReference.descriptor().packages()) {
+                    newPackageLookup.put(aPackage,resolvedModule);
+                }
             }
 
             setFieldValue(FMLLoader.getGameLayer(),"modules",moduleSet);
@@ -242,31 +234,7 @@ public class Injector {
             setFieldValue(FMLLoader.getGameLayer().configuration(),"nameToModule",newConfigurationNameToModules);
 
             setFieldValueWithTargetClass(ModuleClassLoader.class,moduleClassLoader,"resolvedRoots",newResolvedRoots);
-        }
-    }
-
-    private static void addReadsForModule(Module module) {
-        try {
-            Field readsField = Module.class.getDeclaredField("reads");
-            readsField.setAccessible(true);
-            Set<Module> currentReads = (Set<Module>) readsField.get(module);
-            if(currentReads==null) currentReads = new HashSet<>();
-
-            Set<Module> newReads = new HashSet<>(currentReads);
-            for (Module existing : FMLLoader.getGameLayer().modules()) {
-                if (existing.isNamed()) {
-                    newReads.add(existing);
-                }
-            }
-
-
-            long offset = UnsafeUtils.objectFieldOffset(readsField);
-            UnsafeUtils.UNSAFE.putObject(module, offset, newReads);
-
-            NHMJMod.LOGGER.info("Successfully modified reads for module {}", module.getName());
-        } catch (Exception e) {
-            NHMJMod.LOGGER.error("Failed to hack module reads for {}", module.getName(), e);
-            throw new RuntimeException(e);
+            setFieldValueWithTargetClass(ModuleClassLoader.class,moduleClassLoader,"packageLookup",newPackageLookup);
         }
     }
 
