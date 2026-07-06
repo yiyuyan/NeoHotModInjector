@@ -27,7 +27,6 @@ import java.lang.instrument.Instrumentation;
 import java.lang.instrument.UnmodifiableClassException;
 import java.nio.file.Path;
 import java.rmi.UnexpectedException;
-import java.util.Arrays;
 import java.util.Objects;
 
 @Mod(NHMJMod.MODID)
@@ -63,14 +62,13 @@ public class NHMJMod {
             context.getSource().sendSystemMessage(Component.literal("Injecting..."));
             new Thread(()->{
                 try {
-                    Arrays.stream(Objects.requireNonNull(selectMods())).map(File::toPath).forEach(p -> {
-                        try {
-                            NHMJMod.LOGGER.info("Injecting {} by command",p);
-                            Injector.inject(p);
-                        } catch (Throwable e) {
-                            throw new RuntimeException(e);
-                        }
-                    });
+                    try {
+                        Path p = Objects.requireNonNull(selectMod()).toPath();
+                        NHMJMod.LOGGER.info("Injecting {} by command",p);
+                        Injector.inject(p);
+                    } catch (Throwable e) {
+                        throw new RuntimeException(e);
+                    }
                     context.getSource().sendSystemMessage(Component.literal("Done."));
                 } catch (Exception e) {
                     NHMJMod.LOGGER.error("Failed to inject mods.",e);
@@ -94,7 +92,7 @@ public class NHMJMod {
         })));
     }
 
-    public static File[] selectMods(){
+    public static File selectMod(){
         if(Boolean.parseBoolean(System.getProperty("java.awt.headless"))){
             System.setProperty("java.awt.headless", "false");
         }
@@ -105,7 +103,7 @@ public class NHMJMod {
         chooser.setAcceptAllFileFilterUsed(false);
         int flag = chooser.showOpenDialog(frame);
         if(flag == JFileChooser.APPROVE_OPTION){
-            return chooser.getSelectedFiles();
+            return chooser.getSelectedFile();
         }
         return null;
     }
