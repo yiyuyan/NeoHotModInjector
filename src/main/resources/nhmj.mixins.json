@@ -6,7 +6,8 @@
   "mixins": [
   ],
   "client": [
-    "ModsScreenMixin"
+    "MinecraftMixin",
+    "ex.ModsScreenMixin"
   ],
   "injectors": {
     "defaultRequire": 1

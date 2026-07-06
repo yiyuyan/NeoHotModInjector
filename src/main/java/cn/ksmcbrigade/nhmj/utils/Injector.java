@@ -1,7 +1,7 @@
 package cn.ksmcbrigade.nhmj.utils;
 
-import cn.ksmcbrigade.mr.utils.ModuleUtils;
-import cn.ksmcbrigade.mr.utils.UnsafeUtils;
+import cn.ksmcbrigade.mr.utils.InstUtils;
+import cn.ksmcbrigade.mr.utils.mixin.*;
 import cn.ksmcbrigade.nhmj.NHMJMod;
 import com.terraformersmc.mod_menu.ModMenu;
 import com.terraformersmc.mod_menu.util.mod.neoforge.NeoforgeMod;
@@ -9,7 +9,6 @@ import cpw.mods.cl.JarModuleFinder;
 import cpw.mods.cl.ModuleClassLoader;
 import cpw.mods.jarhandling.JarContents;
 import cpw.mods.jarhandling.SecureJar;
-import net.neoforged.bus.api.IEventBus;
 import net.neoforged.fml.*;
 import net.neoforged.fml.event.lifecycle.FMLConstructModEvent;
 import net.neoforged.fml.loading.FMLLoader;
@@ -31,7 +30,10 @@ import org.spongepowered.asm.mixin.FabricUtil;
 import org.spongepowered.asm.mixin.Mixins;
 import org.spongepowered.asm.mixin.extensibility.IMixinConfig;
 import org.spongepowered.asm.mixin.transformer.Config;
+import org.spongepowered.tools.agent.MixinAgent;
 
+import java.lang.instrument.ClassDefinition;
+import java.lang.instrument.UnmodifiableClassException;
 import java.lang.module.*;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
@@ -46,6 +48,7 @@ import java.util.stream.Collectors;
 import static cn.ksmcbrigade.mr.utils.UnsafeUtils.getFieldValue;
 import static cn.ksmcbrigade.mr.utils.UnsafeUtils.setFieldValue;
 
+@SuppressWarnings({"UnstableApiUsage", "unchecked"})
 public class Injector {
 
     public static JarModsDotTomlModFileReader reader = new JarModsDotTomlModFileReader();
@@ -53,7 +56,7 @@ public class Injector {
     public static void inject(Path path) throws Throwable {
         JarContents jarContents = JarContents.of(path);
         IModFile modFile = reader.read(jarContents,ModFileDiscoveryAttributes.DEFAULT);
-        Map<IModFile.Type, List<ModFile>> modFilesMap = new HashMap<>();
+        Map<IModFile.Type, List<ModFile>> modFilesMap;
         List<ModFile> loadedFiles = new ArrayList<>();
         if(modFile instanceof ModFile modFile1) loadedFiles.add(modFile1);
         final UniqueModListBuilder modsUniqueListBuilder = new UniqueModListBuilder(loadedFiles);
@@ -63,7 +66,6 @@ public class Injector {
         //This allows loading to continue to a base state, in case dependency loading fails.
         modFilesMap = uniqueModsData.modFiles().stream()
                 .collect(Collectors.groupingBy(IModFile::getType));
-        loadedFiles = uniqueModsData.modFiles();
         ModValidator validator = new ModValidator(modFilesMap,List.of());
         validator.stage1Validation();
         BackgroundScanHandler backgroundScanHandler = validator.stage2Validation();
@@ -75,6 +77,38 @@ public class Injector {
         LoadingModList loadingModList = backgroundScanHandler.getLoadingModList();
 
         addToGameLayer(loadingModList);
+
+        for (ModFileInfo file : loadingModList.getModFiles()) {
+            for (String mixinConfig : file.getFile().getMixinConfigs()) {
+                Mixins.addConfiguration(mixinConfig);
+                IMixinConfig config = Mixins.getConfigs().stream().collect(Collectors.toMap(Config::getName, Config::getConfig)).get(mixinConfig);
+                if(config!=null){
+                    config.decorate(FabricUtil.KEY_MOD_ID,file.getMods().getFirst().getModId());
+
+                    MixinConfigUtils.onSelect(config);
+                    MixinConfigUtils.prepare(config,MixinAgentUtils.getFirstAgent());
+                    MixinProcessorUtils.addIntoProcessor(MixinProcessorUtils.getProcessor(MixinAgentUtils.getFirstAgent()),config);
+
+                    List<Class<?>> targetClasses = new ArrayList<>();
+                    for (String unhandledTarget : MixinConfigUtils.getUnhandledTargets(config)) {
+                        targetClasses.addAll(MixinUtils.getTargetClasses(Class.forName(unhandledTarget)));
+                    }
+                    Objects.requireNonNull(MixinAgentUtils.getInst()).redefineClasses(targetClasses.stream().map((c)-> {
+                        try {
+                            return new ClassDefinition(c,MixinTransformerUtils.transform(c));
+                        } catch (UnmodifiableClassException e) {
+                            NHMJMod.LOGGER.error("Failed to create class definition.",e);
+                            try {
+                                return new ClassDefinition(c, InstUtils.getClassBytes(MixinAgentUtils.getInst(),c));
+                            } catch (UnmodifiableClassException ex) {
+                                NHMJMod.LOGGER.error("Failed to get class bytes.",e);
+                                return new ClassDefinition(c, MixinAgent.ERROR_BYTECODE);
+                            }
+                        }
+                    }).toList().toArray(new ClassDefinition[0]));
+                }
+            }
+        }
 
         List<ModContainer> containerList = loadingModList.getModFiles().stream()
                 .map(ModFileInfo::getFile)
@@ -94,16 +128,6 @@ public class Injector {
                 })
                 .toList();
 
-        for (ModFileInfo file : loadingModList.getModFiles()) {
-            for (String mixinConfig : file.getFile().getMixinConfigs()) {
-                Mixins.addConfiguration(mixinConfig);
-                IMixinConfig config = Mixins.getConfigs().stream().collect(Collectors.toMap(Config::getName, Config::getConfig)).get(mixinConfig);
-                if(config!=null){
-                    config.decorate(FabricUtil.KEY_MOD_ID,file.getMods().get(0).getModId());
-                }
-            }
-        }
-
         Field currentModFilesF = ModList.class.getDeclaredField("modFiles");
         Field currentModInfosF = ModList.class.getDeclaredField("sortedList");
         Field currentMods = ModList.class.getDeclaredField("mods");
@@ -114,7 +138,6 @@ public class Injector {
 
         ArrayList<ModFile> modFiles = new ArrayList<>();
         ArrayList<ModInfo> modInfos = new ArrayList<>();
-        ArrayList<ModContainer> modContainers = new ArrayList<>();
 
         for (IModFileInfo iModFileInfo : ((List<IModFileInfo>) currentModFilesF.get(ModList.get()))) {
             modFiles.add((ModFile) iModFileInfo.getFile());
@@ -124,11 +147,14 @@ public class Injector {
             modInfos.add((ModInfo) info);
         }
 
-        for (ModContainer modContainer : ((List<ModContainer>) currentMods.get(ModList.get()))) {
-            modContainers.add(modContainer);
-        }
+        ArrayList<ModContainer> modContainers = new ArrayList<>(((List<ModContainer>) currentMods.get(ModList.get())));
 
-        modFiles.add((ModFile) modFile);
+        if (modFile instanceof ModFile) {
+            modFiles.add((ModFile) modFile);
+        }
+        else{
+            throw new UnexpectedException("Wdf?");
+        }
         modInfos.addAll(loadingModList.getMods());
         modContainers.addAll(containerList);
 
@@ -156,10 +182,6 @@ public class Injector {
         }
     }
 
-    private static void testExampleMod() throws NoSuchMethodException, InvocationTargetException, InstantiationException, IllegalAccessException, ClassNotFoundException {
-
-    }
-
     private static void addToGameLayer(LoadingModList loadingModList) throws Throwable {
         for (ModFileInfo modFile : loadingModList.getModFiles()) {
             SecureJar secureJar = modFile.getFile().getSecureJar();
@@ -183,17 +205,22 @@ public class Injector {
             Map<String, Object> resolvedRoots = getFieldValueWithTargetClass(ModuleClassLoader.class,moduleClassLoader,"resolvedRoots",Map.class);
             Map<String, ResolvedModule> packageLookup = getFieldValueWithTargetClass(ModuleClassLoader.class,moduleClassLoader,"packageLookup",Map.class);
 
-            Set<Module> moduleSet = new HashSet<>();
-            moduleSet.addAll(FMLLoader.getGameLayer().modules());
+            Set<Module> moduleSet = new HashSet<>(FMLLoader.getGameLayer().modules());
 
-            HashSet<ResolvedModule> newConfigurationModules = new HashSet<>();
-            newConfigurationModules.addAll(configurationModules);
+            HashSet<ResolvedModule> newConfigurationModules = new HashSet<>(configurationModules);
 
-            HashMap<String,ResolvedModule> newConfigurationNameToModules = new HashMap<>();
-            newConfigurationNameToModules.putAll(configurationNameToModules);
+            HashMap<String, ResolvedModule> newConfigurationNameToModules = new HashMap<>(configurationNameToModules);
 
-            HashMap<String,Object> newResolvedRoots = new HashMap<>();
-            newResolvedRoots.putAll(resolvedRoots);
+            HashMap<String, Object> newResolvedRoots = new HashMap<>();
+            if (resolvedRoots != null) {
+                newResolvedRoots = new HashMap<>(resolvedRoots);
+            }
+            else{
+                NHMJMod.LOGGER.warn("The resolvedRoots is null.");
+                for (ModuleReference reference : FMLLoader.getGameLayer().configuration().modules().stream().map(ResolvedModule::reference).toList()) {
+                    newResolvedRoots.put(reference.descriptor().name(),reference);
+                }
+            }
 
             HashMap<String,Object> newPackageLookup = new HashMap<>();
             if(packageLookup!=null){
@@ -252,9 +279,9 @@ public class Injector {
 
     public static <T> T getFieldValueWithTargetClass(Class<?> targetClass, Object target, String fieldName, Class<T> clazz) {
         try {
-            return (T)getFieldValue(targetClass.getDeclaredField(fieldName), target, clazz);
+            return getFieldValue(targetClass.getDeclaredField(fieldName), target, clazz);
         } catch (Throwable var4) {
-            var4.printStackTrace();
+            NHMJMod.LOGGER.error("Failed to get filed value by unsafe.",var4);
             return null;
         }
     }
@@ -263,7 +290,7 @@ public class Injector {
         try {
             setFieldValue(targetClass.getDeclaredField(fieldName), target, value);
         } catch (Throwable var4) {
-            var4.printStackTrace();
+            NHMJMod.LOGGER.error("Failed to set filed value by unsafe.",var4);
         }
 
     }
