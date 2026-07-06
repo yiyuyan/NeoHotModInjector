@@ -1,5 +1,6 @@
 package cn.ksmcbrigade.nhmj.utils;
 
+import cn.ksmcbrigade.mr.utils.ModuleUtils;
 import cn.ksmcbrigade.mr.utils.UnsafeUtils;
 import cn.ksmcbrigade.nhmj.NHMJMod;
 import com.terraformersmc.mod_menu.ModMenu;
@@ -8,9 +9,11 @@ import cpw.mods.cl.JarModuleFinder;
 import cpw.mods.cl.ModuleClassLoader;
 import cpw.mods.jarhandling.JarContents;
 import cpw.mods.jarhandling.SecureJar;
-import cpw.mods.modlauncher.TransformingClassLoader;
+import net.minecraft.client.gui.screens.TitleScreen;
+import net.neoforged.bus.api.IEventBus;
 import net.neoforged.fml.*;
 import net.neoforged.fml.event.lifecycle.FMLConstructModEvent;
+import net.neoforged.fml.javafmlmod.FMLModContainer;
 import net.neoforged.fml.loading.FMLLoader;
 import net.neoforged.fml.loading.LoadingModList;
 import net.neoforged.fml.loading.UniqueModListBuilder;
@@ -26,13 +29,10 @@ import net.neoforged.neoforgespi.language.IModInfo;
 import net.neoforged.neoforgespi.locating.IModFile;
 import net.neoforged.neoforgespi.locating.ModFileDiscoveryAttributes;
 import org.jetbrains.annotations.NotNull;
-import org.lwjgl.glfw.GLFW;
 import org.spongepowered.asm.mixin.FabricUtil;
 import org.spongepowered.asm.mixin.Mixins;
 import org.spongepowered.asm.mixin.extensibility.IMixinConfig;
 import org.spongepowered.asm.mixin.transformer.Config;
-
-import cn.ksmcbrigade.mr.utils.UnsafeUtils.*;
 
 import java.lang.module.*;
 import java.lang.reflect.Constructor;
@@ -45,11 +45,14 @@ import java.rmi.UnexpectedException;
 import java.util.*;
 import java.util.stream.Collectors;
 
+import static cn.ksmcbrigade.mr.utils.UnsafeUtils.getFieldValue;
+import static cn.ksmcbrigade.mr.utils.UnsafeUtils.setFieldValue;
+
 public class Injector {
 
     public static JarModsDotTomlModFileReader reader = new JarModsDotTomlModFileReader();
 
-    public static void inject(Path path) throws IllegalAccessException, NoSuchMethodException, InvocationTargetException, NoSuchFieldException, ClassNotFoundException, InstantiationException, UnexpectedException {
+    public static void inject(Path path) throws Throwable {
         JarContents jarContents = JarContents.of(path);
         IModFile modFile = reader.read(jarContents,ModFileDiscoveryAttributes.DEFAULT);
         Map<IModFile.Type, List<ModFile>> modFilesMap = new HashMap<>();
@@ -75,6 +78,8 @@ public class Injector {
 
         addToGameLayer(loadingModList);
 
+        ModuleUtils.openAllModules();
+
         for (Module module : FMLLoader.getGameLayer().modules()) {
             NHMJMod.LOGGER.info("Module: name:{} - classloader:{} - annotations:{} - layer:{} - descriptor:{} - packages:{} - named:{} - module:{}",
                     module.getName(),
@@ -98,9 +103,10 @@ public class Injector {
                         throw new RuntimeException(e);
                     }
                 })
-                .<ModContainer>mapMulti((a,b)->{
-                    System.out.println(a.getClass());
-                    System.out.println(b.getClass());
+                .<ModContainer>mapMulti((modContainers, consumer)->{
+                    for (ModContainer container : (List<ModContainer>) modContainers) {
+                        consumer.accept(container);
+                    }
                 })
                 .toList();
 
@@ -164,9 +170,22 @@ public class Injector {
             ModMenu.MODS.put(modContainer.getModId(),new NeoforgeMod(modContainer));
             ModLoadingContext.get().setActiveContainer(null);
         }
+
+        if(!FMLLoader.isProduction()) testExampleMod();
     }
 
-    private static void addToGameLayer(LoadingModList loadingModList) throws NoSuchMethodException, InvocationTargetException, InstantiationException, IllegalAccessException, UnexpectedException {
+    private static void testExampleMod() throws NoSuchMethodException, InvocationTargetException, InstantiationException, IllegalAccessException, ClassNotFoundException {
+        ModContainer container = ModList.get().getModContainerById("examplemod").orElseThrow();
+        IEventBus eventBus = container.getEventBus();
+        Class<?> clazz = Class.forName("cn.ksmcbrigade.examplemod.Examplemod");
+        Constructor<?> constructor = clazz.getDeclaredConstructor(IEventBus.class, ModContainer.class);
+        constructor.setAccessible(true);
+        ModLoadingContext.get().setActiveContainer(container);
+        constructor.newInstance(eventBus,container);
+        ModLoadingContext.get().setActiveContainer(null);
+    }
+
+    private static void addToGameLayer(LoadingModList loadingModList) throws Throwable {
         for (ModFileInfo modFile : loadingModList.getModFiles()) {
             SecureJar secureJar = modFile.getFile().getSecureJar();
             String target = secureJar.name();
@@ -178,15 +197,15 @@ public class Injector {
             moduleConstructor.setAccessible(true);
 
             JarModuleFinder finder = JarModuleFinder.of(secureJar);
-            Set<ModuleReference> moduleReferences =  finder.findAll();
+            Set<ModuleReference> moduleReferences = finder.findAll();
 
             ModuleClassLoader moduleClassLoader = getModuleClassLoader();
 
-            Map<String,Module> namedModule = UnsafeUtils.getFieldValue(FMLLoader.getGameLayer(),"nameToModule",Map.class);
-            Set<ResolvedModule> configurationModules = UnsafeUtils.getFieldValue(FMLLoader.getGameLayer().configuration(),"modules",Set.class);
-            Map<String,ResolvedModule> configurationNameToModules = UnsafeUtils.getFieldValue(FMLLoader.getGameLayer().configuration(),"nameToModule",Map.class);
+            Map<String,Module> namedModule = getFieldValue(FMLLoader.getGameLayer(),"nameToModule",Map.class);
+            Set<ResolvedModule> configurationModules = getFieldValue(FMLLoader.getGameLayer().configuration(),"modules",Set.class);
+            Map<String,ResolvedModule> configurationNameToModules = getFieldValue(FMLLoader.getGameLayer().configuration(),"nameToModule",Map.class);
 
-            Map<String, Object> resolvedRoots = UnsafeUtils.getFieldValue(moduleClassLoader,"resolvedRoots",Map.class);
+            Map<String, Object> resolvedRoots = getFieldValueWithTargetClass(ModuleClassLoader.class,moduleClassLoader,"resolvedRoots",Map.class);
 
             Set<Module> moduleSet = new HashSet<>();
             moduleSet.addAll(FMLLoader.getGameLayer().modules());
@@ -201,10 +220,13 @@ public class Injector {
             newResolvedRoots.putAll(resolvedRoots);
 
             for (ModuleReference moduleReference : moduleReferences) {
-                Module module = moduleConstructor.newInstance(FMLLoader.getGameLayer(),Injector.class.getClassLoader(),moduleReference.descriptor(),moduleReference.location().orElseThrow());
+                Module module = moduleConstructor.newInstance(FMLLoader.getGameLayer(),moduleClassLoader,moduleReference.descriptor(),moduleReference.location().orElseThrow());
                 ResolvedModule resolvedModule = resolvedModuleConstructor.newInstance(FMLLoader.getGameLayer().configuration(),moduleReference);
 
+                addReadsForModule(module);
+
                 moduleSet.add(module);
+                namedModule.put(moduleReference.descriptor().name(),module);
                 namedModule.put(target,module);
 
                 newConfigurationModules.add(resolvedModule);
@@ -213,23 +235,45 @@ public class Injector {
                 newResolvedRoots.put(moduleReference.descriptor().name(),moduleReference);
             }
 
-            UnsafeUtils.setFieldValue(FMLLoader.getGameLayer(),"modules",moduleSet);
-            UnsafeUtils.setFieldValue(FMLLoader.getGameLayer(),"nameToModule",namedModule);
+            setFieldValue(FMLLoader.getGameLayer(),"modules",moduleSet);
+            setFieldValue(FMLLoader.getGameLayer(),"nameToModule",namedModule);
 
-            UnsafeUtils.setFieldValue(FMLLoader.getGameLayer().configuration(),"modules",newConfigurationModules);
-            UnsafeUtils.setFieldValue(FMLLoader.getGameLayer().configuration(),"nameToModule",newConfigurationNameToModules);
+            setFieldValue(FMLLoader.getGameLayer().configuration(),"modules",newConfigurationModules);
+            setFieldValue(FMLLoader.getGameLayer().configuration(),"nameToModule",newConfigurationNameToModules);
 
-            UnsafeUtils.setFieldValue(moduleClassLoader,"resolvedRoots",newResolvedRoots);
+            setFieldValueWithTargetClass(ModuleClassLoader.class,moduleClassLoader,"resolvedRoots",newResolvedRoots);
+        }
+    }
+
+    private static void addReadsForModule(Module module) {
+        try {
+            Field readsField = Module.class.getDeclaredField("reads");
+            readsField.setAccessible(true);
+            Set<Module> currentReads = (Set<Module>) readsField.get(module);
+            if(currentReads==null) currentReads = new HashSet<>();
+
+            Set<Module> newReads = new HashSet<>(currentReads);
+            for (Module existing : FMLLoader.getGameLayer().modules()) {
+                if (existing.isNamed()) {
+                    newReads.add(existing);
+                }
+            }
+
+
+            long offset = UnsafeUtils.objectFieldOffset(readsField);
+            UnsafeUtils.UNSAFE.putObject(module, offset, newReads);
+
+            NHMJMod.LOGGER.info("Successfully modified reads for module {}", module.getName());
+        } catch (Exception e) {
+            NHMJMod.LOGGER.error("Failed to hack module reads for {}", module.getName(), e);
+            throw new RuntimeException(e);
         }
     }
 
     private static @NotNull ModuleClassLoader getModuleClassLoader() throws UnexpectedException {
-        ClassLoader classLoader = GLFW.class.getClassLoader();
+        ClassLoader classLoader = FMLLoader.getGameLayer().findLoader("neoforge");
         ModuleClassLoader moduleClassLoader;
-        if(!(classLoader instanceof ModuleClassLoader) || classLoader instanceof TransformingClassLoader){
-            throw new RuntimeException("Failed to get the module class loader from GLFW.");
-        }
-        else if(classLoader instanceof ModuleClassLoader loader){
+        if(classLoader instanceof ModuleClassLoader loader){
             moduleClassLoader = loader;
         }
         else{
@@ -238,7 +282,21 @@ public class Injector {
         return moduleClassLoader;
     }
 
-    public static void setLayer(ModuleLayer layer,Configuration configuration,Module module,ResolvedModule resolvedModule){
+    public static <T> T getFieldValueWithTargetClass(Class<?> targetClass, Object target, String fieldName, Class<T> clazz) {
+        try {
+            return (T)getFieldValue(targetClass.getDeclaredField(fieldName), target, clazz);
+        } catch (Throwable var4) {
+            var4.printStackTrace();
+            return null;
+        }
+    }
+
+    public static void setFieldValueWithTargetClass(Class<?> targetClass,Object target, String fieldName, Object value) {
+        try {
+            setFieldValue(targetClass.getDeclaredField(fieldName), target, value);
+        } catch (Throwable var4) {
+            var4.printStackTrace();
+        }
 
     }
 }

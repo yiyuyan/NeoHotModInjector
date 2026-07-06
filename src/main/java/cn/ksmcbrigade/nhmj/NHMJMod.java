@@ -2,6 +2,7 @@ package cn.ksmcbrigade.nhmj;
 
 import cn.ksmcbrigade.mr.utils.mixin.MixinAgentUtils;
 import cn.ksmcbrigade.nhmj.transformers.DeferredMixinConfigRegistrationTransformer;
+import cn.ksmcbrigade.nhmj.transformers.MethodHandlesTransformer;
 import cn.ksmcbrigade.nhmj.transformers.ModuleLayerHandlerTransformer;
 import cn.ksmcbrigade.nhmj.transformers.dev.AccessibleObjectTransformer;
 import cn.ksmcbrigade.nhmj.transformers.dev.MethodHandleFieldAccessorImplTransformer;
@@ -20,6 +21,7 @@ import org.slf4j.Logger;
 
 import java.lang.instrument.Instrumentation;
 import java.lang.instrument.UnmodifiableClassException;
+import java.lang.invoke.MethodHandles;
 
 @Mod(NHMJMod.MODID)
 public class NHMJMod {
@@ -32,8 +34,12 @@ public class NHMJMod {
         inst.addTransformer(new DeferredMixinConfigRegistrationTransformer(),true);
         inst.addTransformer(new ModuleLayerHandlerTransformer(),true);
 
+        inst.addTransformer(new MethodHandlesTransformer(),true);
+
         inst.retransformClasses(DeferredMixinConfigRegistration.class);
         inst.retransformClasses(ModuleLayerHandler.class);
+
+        inst.retransformClasses(MethodHandles.class);
 
         if(!FMLLoader.isProduction()){
             inst.addTransformer(new AccessibleObjectTransformer(),true);
