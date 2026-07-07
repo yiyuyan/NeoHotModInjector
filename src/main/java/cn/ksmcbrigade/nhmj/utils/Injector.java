@@ -34,6 +34,7 @@ import org.spongepowered.asm.mixin.FabricUtil;
 import org.spongepowered.asm.mixin.Mixins;
 import org.spongepowered.asm.mixin.extensibility.IMixinConfig;
 import org.spongepowered.asm.mixin.transformer.Config;
+import org.spongepowered.asm.mixin.transformer.ext.Extensions;
 
 import java.lang.module.*;
 import java.lang.reflect.Constructor;
@@ -54,6 +55,16 @@ import static cn.ksmcbrigade.mr.utils.mixin.MixinUtils.getTargetClasses;
 public final class Injector {
 
     public static JarModsDotTomlModFileReader reader = new JarModsDotTomlModFileReader();
+
+    public static final Class<?> mixinConfigClass;
+
+    static {
+        try {
+            mixinConfigClass = Class.forName("org.spongepowered.asm.mixin.transformer.MixinConfig");
+        } catch (ClassNotFoundException e) {
+            throw new RuntimeException("Failed to get mixin config class.",e);
+        }
+    }
 
     public static void inject(Path path) throws Throwable {
         JarContents jarContents = JarContents.of(path);
@@ -127,6 +138,10 @@ public final class Injector {
                                 Constants.LOGGER.error("Failed to reapply mixin configs.", e);
                             }
                         }
+
+                        Method postInitialiseM = mixinConfigClass.getDeclaredMethod("postInitialise", Extensions.class);
+                        postInitialiseM.setAccessible(true);
+                        postInitialiseM.invoke(realConfig,(Extensions)MixinTransformerUtils.getTransformer().getExtensions());
                     }
                 }
             }
