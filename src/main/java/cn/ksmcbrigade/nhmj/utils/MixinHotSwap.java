@@ -1,7 +1,6 @@
 package cn.ksmcbrigade.nhmj.utils;
 
 import com.mojang.logging.LogUtils;
-import net.neoforged.fml.loading.FMLLoader;
 import org.objectweb.asm.*;
 import org.objectweb.asm.tree.*;
 import org.slf4j.Logger;
@@ -131,6 +130,10 @@ public final class MixinHotSwap {
         //clinit.maxLocals = 0;
         ext.methods.add(clinit);
 
+        Map<String, String> bridgeMap = new HashMap<>();
+        List<MethodNode> bridges = new ArrayList<>();
+        int bridgeCounter = 0;
+
         // accessor helpers for each added instance field, generated on ext:
         //   static Object get$<name>(Object self)
         //   static void   set$<name>(Object self, Object v)
@@ -165,13 +168,13 @@ public final class MixinHotSwap {
                     "(L" + ownerInternal + ";" + m.desc.substring(1), // prepend self param
                     m.signature, m.exceptions == null ? null : m.exceptions.toArray(new String[0]));
             m.accept(staticVersion);
-            rewriteMemberAccess(staticVersion.instructions, ownerInternal, extInternal, addedMethodKeys, addedFieldKeys);
+            rewriteMemberAccess(staticVersion.instructions, ownerInternal, extInternal, addedMethodKeys, addedFieldKeys,bridgeMap);
             //staticVersion.maxStack = m.maxStack + 1;
             //staticVersion.maxLocals = m.maxLocals + 1;
             ext.methods.add(staticVersion);
         }
 
-        ClassWriter extWriter = new SafeClassWriter(ClassWriter.COMPUTE_FRAMES | ClassWriter.COMPUTE_MAXS, FMLLoader.getGameLayer().findLoader("minecraft"));
+        ClassWriter extWriter = new SafeClassWriter(ClassWriter.COMPUTE_FRAMES | ClassWriter.COMPUTE_MAXS, clazz.getClassLoader());
         ext.accept(extWriter);
 
         // ---- build the schema-safe owner patch ----
@@ -202,19 +205,55 @@ public final class MixinHotSwap {
         patchedOwner.outerMethodDesc = oldNode.outerMethodDesc;
         patchedOwner.attrs = oldNode.attrs;
 
+        for (String key : addedMethodKeys) {
+            MethodNode m = newMethods.get(key);
+            for (AbstractInsnNode insn : m.instructions) {
+                if (insn instanceof MethodInsnNode mi && mi.getOpcode() == Opcodes.INVOKESPECIAL) {
+                    if (mi.name.equals("<init>")) continue;
+                    String bridgeKey = mi.owner + "." + mi.name + mi.desc;
+                    if (!bridgeMap.containsKey(bridgeKey)) {
+                        String bridgeName = "$$bridge$" + (bridgeCounter++);
+                        bridgeMap.put(bridgeKey, bridgeName);
+
+                        MethodNode bridge = new MethodNode(
+                                Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC | Opcodes.ACC_SYNTHETIC,
+                                bridgeName,
+                                "(L" + ownerInternal + ";" + mi.desc.substring(1),
+                                null, null);
+                        InsnList bridgeInsns = bridge.instructions;
+                        bridgeInsns.add(new VarInsnNode(Opcodes.ALOAD, 0)); // self
+                        Type[] argTypes = Type.getArgumentTypes(mi.desc);
+                        int slot = 1;
+                        for (Type type : argTypes) {
+                            bridgeInsns.add(new VarInsnNode(type.getOpcode(Opcodes.ILOAD), slot));
+                            slot += type.getSize();
+                        }
+                        bridgeInsns.add(new MethodInsnNode(Opcodes.INVOKESPECIAL, mi.owner, mi.name, mi.desc, false));
+                        bridgeInsns.add(new InsnNode(Type.getReturnType(mi.desc).getOpcode(Opcodes.IRETURN)));
+                        bridge.maxStack = 0;
+                        bridge.maxLocals = 0;
+
+                        bridges.add(bridge);
+                    }
+                }
+            }
+        }
+
         for (MethodNode oldM : oldNode.methods) {
             String key = oldM.name + oldM.desc;
             MethodNode source = newMethods.getOrDefault(key, oldM);
             MethodNode copy = new MethodNode(source.access, source.name, source.desc,
                     source.signature, source.exceptions == null ? null : source.exceptions.toArray(new String[0]));
             source.accept(copy);
-            rewriteMemberAccess(copy.instructions, ownerInternal, extInternal, addedMethodKeys, addedFieldKeys);
+            rewriteMemberAccess(copy.instructions, ownerInternal, extInternal, addedMethodKeys, addedFieldKeys,bridgeMap);
             //copy.maxStack = source.maxStack + 2;
             //copy.maxLocals = source.maxLocals + 2;
             patchedOwner.methods.add(copy);
         }
 
-        ClassWriter ownerWriter = new SafeClassWriter(ClassWriter.COMPUTE_FRAMES | ClassWriter.COMPUTE_MAXS,FMLLoader.getGameLayer().findLoader("minecraft"));
+        patchedOwner.methods.addAll(bridges);
+
+        ClassWriter ownerWriter = new SafeClassWriter(ClassWriter.COMPUTE_FRAMES | ClassWriter.COMPUTE_MAXS,clazz.getClassLoader());
         patchedOwner.accept(ownerWriter);
 
         Patch patch = new Patch();
@@ -285,26 +324,33 @@ public final class MixinHotSwap {
     //   GETFIELD  owner.addedField  -> INVOKESTATIC ext.get$addedField(self)  (+ CHECKCAST/unbox)
     //   PUTFIELD  owner.addedField  -> INVOKESTATIC ext.set$addedField(self, v) (+ box)
     private static void rewriteMemberAccess(InsnList insns, String owner, String ext,
-                                            Set<String> addedMethods, Set<String> addedFields) {
+                                            Set<String> addedMethods, Set<String> addedFields,Map<String, String> bridgeMap) {
         for (AbstractInsnNode insn : insns.toArray()) {
-            if (insn instanceof MethodInsnNode mi && mi.owner.equals(owner)) { //nfc
-                String key = mi.name + mi.desc;
-                if (!addedMethods.contains(key)) continue;
-                if (mi.getOpcode() == Opcodes.INVOKESPECIAL) {
-                    if (mi.name.equals("<init>")) {
+            if (insn instanceof MethodInsnNode mi) {
+                if (mi.getOpcode() == Opcodes.INVOKESPECIAL && !mi.name.equals("<init>")) {
+                    String bridgeKey = mi.owner + "." + mi.name + mi.desc;
+                    if (bridgeMap.containsKey(bridgeKey)) {
+                        String bridgeName = bridgeMap.get(bridgeKey);
+                        mi.owner = owner;
+                        mi.name = bridgeName;
+                        mi.desc = "(L" + owner + ";" + mi.desc.substring(1);
+                        mi.setOpcode(Opcodes.INVOKESTATIC);
+                        mi.itf = false;
                         continue;
                     }
-                    mi.setOpcode(Opcodes.INVOKESTATIC);
-                    mi.desc = "(L" + owner + ";" + mi.desc.substring(1);
-                    mi.itf = false;
-                    mi.owner = ext;
-                } else if (mi.getOpcode() != Opcodes.INVOKESTATIC) {
-                    mi.desc = "(L" + owner + ";" + mi.desc.substring(1);
-                    mi.setOpcode(Opcodes.INVOKESTATIC);
-                    mi.itf = false;
-                    mi.owner = ext;
-                } else {
-                    mi.owner = ext;
+                }
+
+                if (mi.owner.equals(owner)) {
+                    String key = mi.name + mi.desc;
+                    if (!addedMethods.contains(key)) continue;
+                    if (mi.getOpcode() == Opcodes.INVOKESTATIC) {
+                        mi.owner = ext;
+                    } else {
+                        mi.desc = "(L" + owner + ";" + mi.desc.substring(1);
+                        mi.setOpcode(Opcodes.INVOKESTATIC);
+                        mi.itf = false;
+                        mi.owner = ext;
+                    }
                 }
             } else if (insn instanceof FieldInsnNode fi && fi.owner.equals(owner)) {
                 String fieldKey = fi.name + ":" + fi.desc;
