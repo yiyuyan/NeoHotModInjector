@@ -1,6 +1,7 @@
 package cn.ksmcbrigade.nhmj.utils;
 
 import com.mojang.logging.LogUtils;
+import net.neoforged.fml.loading.FMLLoader;
 import org.objectweb.asm.*;
 import org.objectweb.asm.tree.*;
 import org.slf4j.Logger;
@@ -170,7 +171,7 @@ public final class MixinHotSwap {
             ext.methods.add(staticVersion);
         }
 
-        ClassWriter extWriter = new ClassWriter(ClassWriter.COMPUTE_FRAMES | ClassWriter.COMPUTE_MAXS);
+        ClassWriter extWriter = new SafeClassWriter(ClassWriter.COMPUTE_FRAMES | ClassWriter.COMPUTE_MAXS, FMLLoader.getGameLayer().findLoader("minecraft"));
         ext.accept(extWriter);
 
         // ---- build the schema-safe owner patch ----
@@ -213,7 +214,7 @@ public final class MixinHotSwap {
             patchedOwner.methods.add(copy);
         }
 
-        ClassWriter ownerWriter = new ClassWriter(ClassWriter.COMPUTE_FRAMES | ClassWriter.COMPUTE_MAXS);
+        ClassWriter ownerWriter = new SafeClassWriter(ClassWriter.COMPUTE_FRAMES | ClassWriter.COMPUTE_MAXS,FMLLoader.getGameLayer().findLoader("minecraft"));
         patchedOwner.accept(ownerWriter);
 
         Patch patch = new Patch();
@@ -289,12 +290,22 @@ public final class MixinHotSwap {
             if (insn instanceof MethodInsnNode mi && mi.owner.equals(owner)) { //nfc
                 String key = mi.name + mi.desc;
                 if (!addedMethods.contains(key)) continue;
-                if (mi.getOpcode() != Opcodes.INVOKESTATIC) {
+                if (mi.getOpcode() == Opcodes.INVOKESPECIAL) {
+                    if (mi.name.equals("<init>")) {
+                        continue;
+                    }
+                    mi.setOpcode(Opcodes.INVOKESTATIC);
+                    mi.desc = "(L" + owner + ";" + mi.desc.substring(1);
+                    mi.itf = false;
+                    mi.owner = ext;
+                } else if (mi.getOpcode() != Opcodes.INVOKESTATIC) {
                     mi.desc = "(L" + owner + ";" + mi.desc.substring(1);
                     mi.setOpcode(Opcodes.INVOKESTATIC);
                     mi.itf = false;
+                    mi.owner = ext;
+                } else {
+                    mi.owner = ext;
                 }
-                mi.owner = ext;
             } else if (insn instanceof FieldInsnNode fi && fi.owner.equals(owner)) {
                 String fieldKey = fi.name + ":" + fi.desc;
                 if (addedFields.contains(fieldKey)) {
