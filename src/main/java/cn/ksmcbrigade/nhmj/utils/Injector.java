@@ -229,7 +229,7 @@ public final class Injector {
             ModMenu.MODS.put(modContainer.getModId(),new NeoforgeMod(modContainer));
             Class<?> clazz = Class.forName("com.terraformersmc.mod_menu.ModMenu");
             Class<?> neoforgeMod = Class.forName("com.terraformersmc.mod_menu.util.mod.neoforge.NeoforgeMod");
-            Map<String,Object> MODS = UnsafeUtils.getFieldValue(clazz,"MODS",Map.class);
+            Map<String,Object> MODS = UnsafeUtils.getFieldValue(clazz,"MODS",Map.class); //mem address
             Constructor<?> modConstructor = neoforgeMod.getDeclaredConstructor(ModContainer.class);
             if(MODS==null){
                 MODS = new HashMap<>();
@@ -237,12 +237,6 @@ public final class Injector {
             }
 
             MODS.put(modContainer.getModId(),modConstructor.newInstance(modContainer));
-
-            try {
-                UnsafeUtils.setFieldValue(clazz,"MODS",MODS);
-            } catch (Throwable e) {
-                NHMJMod.LOGGER.warn("Failed to re-set ModMenu::MODS: {}:{}",e.getClass(),e.getMessage());
-            }
         }
         catch (Throwable throwable){
             if(throwable instanceof ClassNotFoundException || throwable instanceof NoClassDefFoundError) return;
