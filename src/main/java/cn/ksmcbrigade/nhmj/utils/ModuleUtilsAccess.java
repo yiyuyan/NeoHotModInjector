@@ -10,14 +10,14 @@ import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 
-public class ModuleUtilsAccess {
+public final class ModuleUtilsAccess {
 
     @SuppressWarnings("unchecked")
     public static Set<Module> getReads(Module module){
         Set<Module> moduleSet = UnsafeUtils.getFieldValue(module,"reads",Set.class);
         if(moduleSet==null){
             moduleSet = new HashSet<>();
-            NHMJMod.LOGGER.warn("The reads of {} is null!",moduleSet);
+            if(NHMJMod.DEBUG)NHMJMod.LOGGER.warn("The reads of {} is null!",module);
         }
         return moduleSet;
     }
@@ -25,7 +25,8 @@ public class ModuleUtilsAccess {
     public static void redefineModuleToAddAllReads(Module module) {
         Instrumentation inst = MixinAgentUtils.getInst();
         if(inst==null) throw new NullPointerException("The instrumentation from runtime mixin agent is null.How did you do it?");
-        Set<Module> allModules = new HashSet<>();
+
+        Set<Module> allModules = new HashSet<>(FMLLoader.getGameLayer().modules());
 
         for (Module module1 : FMLLoader.getGameLayer().modules()) {
             allModules.addAll(getReads(module1));
@@ -39,5 +40,11 @@ public class ModuleUtilsAccess {
         }
 
         inst.redefineModule(module, extraReads, Map.of(), Map.of(), Set.of(), Map.of());
+    }
+
+    public static void addAllReadsForFMLGameLayerModules(){
+        for (Module module : FMLLoader.getGameLayer().modules()) {
+            redefineModuleToAddAllReads(module);
+        }
     }
 }

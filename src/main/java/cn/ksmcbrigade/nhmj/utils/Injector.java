@@ -1,6 +1,7 @@
 package cn.ksmcbrigade.nhmj.utils;
 
 import cn.ksmcbrigade.mr.Constants;
+import cn.ksmcbrigade.mr.utils.UnsafeUtils;
 import cn.ksmcbrigade.mr.utils.mixin.*;
 import cn.ksmcbrigade.nhmj.NHMJMod;
 import com.terraformersmc.mod_menu.ModMenu;
@@ -9,6 +10,9 @@ import cpw.mods.cl.JarModuleFinder;
 import cpw.mods.cl.ModuleClassLoader;
 import cpw.mods.jarhandling.JarContents;
 import cpw.mods.jarhandling.SecureJar;
+import it.unimi.dsi.fastutil.floats.FloatUnaryOperator;
+import net.minecraft.client.DeltaTracker;
+import net.minecraft.client.Minecraft;
 import net.neoforged.fml.*;
 import net.neoforged.fml.event.lifecycle.FMLConstructModEvent;
 import net.neoforged.fml.loading.FMLLoader;
@@ -31,8 +35,6 @@ import org.spongepowered.asm.mixin.Mixins;
 import org.spongepowered.asm.mixin.extensibility.IMixinConfig;
 import org.spongepowered.asm.mixin.transformer.Config;
 
-import java.lang.instrument.ClassDefinition;
-import java.lang.instrument.UnmodifiableClassException;
 import java.lang.module.*;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
@@ -49,7 +51,7 @@ import static cn.ksmcbrigade.mr.utils.UnsafeUtils.setFieldValue;
 import static cn.ksmcbrigade.mr.utils.mixin.MixinUtils.getTargetClasses;
 
 @SuppressWarnings({"UnstableApiUsage", "unchecked"})
-public class Injector {
+public final class Injector {
 
     public static JarModsDotTomlModFileReader reader = new JarModsDotTomlModFileReader();
 
@@ -78,39 +80,62 @@ public class Injector {
 
         addToGameLayer(loadingModList);
 
-        for (ModFileInfo file : loadingModList.getModFiles()) {
-            for (String mixinConfig : file.getFile().getMixinConfigs()) {
-                Mixins.addConfiguration(mixinConfig);
-                IMixinConfig config = Mixins.getConfigs().stream().collect(Collectors.toMap(Config::getName, Config::getConfig)).get(mixinConfig);
-                if(config!=null){
-                    config.decorate(FabricUtil.KEY_MOD_ID,file.getMods().getFirst().getModId());
+        try {
+            for (ModFileInfo file : loadingModList.getModFiles()) {
+                for (String mixinConfig : file.getFile().getMixinConfigs()) {
+                    Mixins.addConfiguration(mixinConfig);
+                    IMixinConfig config = Mixins.getConfigs().stream().collect(Collectors.toMap(Config::getName, Config::getConfig)).get(mixinConfig);
+                    if(config!=null){
+                        config.decorate(FabricUtil.KEY_MOD_ID,file.getMods().getFirst().getModId());
 
-                    Config config1 = MixinUtils.toConfig(mixinConfig);
+                        Config config1 = MixinUtils.toConfig(mixinConfig);
 
-                    IMixinConfig realConfig = config1.getConfig();
-                    MixinConfigUtils.onSelect(realConfig);
-                    MixinConfigUtils.prepare(realConfig,MixinAgentUtils.getFirstAgent());
-                    MixinProcessorUtils.addIntoProcessor(MixinProcessorUtils.getProcessor(MixinAgentUtils.getFirstAgent()),realConfig);
+                        IMixinConfig realConfig = config1.getConfig();
+                        MixinConfigUtils.onSelect(realConfig);
+                        MixinConfigUtils.prepare(realConfig,MixinAgentUtils.getFirstAgent());
+                        MixinProcessorUtils.addIntoProcessor(MixinProcessorUtils.getProcessor(MixinAgentUtils.getFirstAgent()),realConfig);
 
-                    System.setProperty("spring.devtools.restart.enabled=true","true");
-                    for (String s : MixinConfigUtils.getGlobalMixinList(realConfig)) {
-                        if(!s.startsWith(realConfig.getMixinPackage())) continue;
-                        try {
-                            for(Class<?> targetClass : getTargetClasses(Class.forName(s))) {
-                                try {
-                                    byte[] bytes = MixinTransformerUtils.transform(targetClass);
-                                    Objects.requireNonNull(MixinAgentUtils.getInst()).redefineClasses(new ClassDefinition(targetClass, bytes));
-                                } catch (ClassNotFoundException | UnmodifiableClassException e) {
-                                    Constants.LOGGER.error("Failed to transform and redefine {}.", targetClass, e);
+                        for (String s : MixinConfigUtils.getGlobalMixinList(realConfig)) {
+                            if(!s.startsWith(realConfig.getMixinPackage())) continue;
+                            try {
+                                for(Class<?> targetClass : getTargetClasses(Class.forName(s))) {
+                                    try {
+                                        byte[] bytes = MixinTransformerUtils.transform(targetClass);
+                                        //Objects.requireNonNull(MixinAgentUtils.getInst()).redefineClasses(new ClassDefinition(targetClass, bytes));
+                                        ModuleUtilsAccess.addAllReadsForFMLGameLayerModules();
+
+                                        //GLFW.glfwHideWindow(Minecraft.getInstance().window.window);
+                                        DeltaTracker.Timer timer0 = Minecraft.getInstance().timer;
+                                        Minecraft.getInstance().noRender = true;
+                                        Minecraft.getInstance().pause = true;
+                                        Minecraft.getInstance().timer = new DeltaTracker.Timer(0,0L, FloatUnaryOperator.identity());
+                                        Minecraft.getInstance().timer.paused = true;
+
+                                        MixinHotSwap.replaceMixedClasses(targetClass,bytes,MixinAgentUtils.getInst(),null);
+                                        ModuleUtilsAccess.addAllReadsForFMLGameLayerModules();
+
+                                        //GLFW.glfwShowWindow(Minecraft.getInstance().window.window);
+                                        if(timer0.targetMsptProvider.equals(FloatUnaryOperator.identity())) timer0 = new DeltaTracker.Timer(20.0F, 0L, Minecraft.getInstance()::getTickTargetMillis);
+                                        Minecraft.getInstance().timer = timer0;
+                                        Minecraft.getInstance().noRender = false;
+                                        Minecraft.getInstance().pause = false;
+                                    } catch (Throwable e) {
+                                        Constants.LOGGER.error("Failed to transform and redefine {}.", targetClass, e);
+                                    }
                                 }
+                            } catch (Throwable e) {
+                                Constants.LOGGER.error("Failed to reapply mixin configs.", e);
                             }
-                        } catch (Throwable e) {
-                            Constants.LOGGER.error("Failed to reapply mixin configs.", e);
                         }
                     }
                 }
             }
+        } catch (Throwable e) {
+            NHMJMod.LOGGER.error("Failed to add or reapply mixins for {}.",path.toFile().getName(),e);
+            throw new Throwable("Error in inject mixins.",e);
         }
+
+        ModuleUtilsAccess.addAllReadsForFMLGameLayerModules();
 
         List<ModContainer> containerList = loadingModList.getModFiles().stream()
                 .map(ModFileInfo::getFile)
@@ -179,8 +204,34 @@ public class Injector {
             ModLoadingContext.get().setActiveContainer(modContainer);
             constructModM.invoke(modContainer);
             modContainer.acceptEvent(new FMLConstructModEvent(modContainer, workQueue));
-            ModMenu.MODS.put(modContainer.getModId(),new NeoforgeMod(modContainer));
+            addIntoBTL(modContainer);
             ModLoadingContext.get().setActiveContainer(null);
+        }
+    }
+
+    private static void addIntoBTL(ModContainer modContainer) {
+        try {
+            ModMenu.MODS.put(modContainer.getModId(),new NeoforgeMod(modContainer));
+            Class<?> clazz = Class.forName("com.terraformersmc.mod_menu.ModMenu");
+            Class<?> neoforgeMod = Class.forName("com.terraformersmc.mod_menu.util.mod.neoforge.NeoforgeMod");
+            Map<String,Object> MODS = UnsafeUtils.getFieldValue(clazz,"MODS",Map.class);
+            Constructor<?> modConstructor = neoforgeMod.getDeclaredConstructor(ModContainer.class);
+            if(MODS==null){
+                MODS = new HashMap<>();
+                NHMJMod.LOGGER.warn("The MODS in ModMenu is null.");
+            }
+
+            MODS.put(modContainer.getModId(),modConstructor.newInstance(modContainer));
+
+            try {
+                UnsafeUtils.setFieldValue(clazz,"MODS",MODS);
+            } catch (Throwable e) {
+                NHMJMod.LOGGER.warn("Failed to re-set ModMenu::MODS: {}:{}",e.getClass(),e.getMessage());
+            }
+        }
+        catch (Throwable throwable){
+            if(throwable instanceof ClassNotFoundException || throwable instanceof NoClassDefFoundError) return;
+            NHMJMod.LOGGER.warn("Can't add {} into the BetterModList,did you install it? {}:{}",modContainer.getModId(),throwable.getClass(),throwable.getMessage());
         }
     }
 

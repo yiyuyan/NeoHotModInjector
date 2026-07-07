@@ -3,6 +3,7 @@ package cn.ksmcbrigade.nhmj;
 import cn.ksmcbrigade.mr.utils.mixin.MixinAgentUtils;
 import cn.ksmcbrigade.nhmj.transformers.DeferredMixinConfigRegistrationTransformer;
 import cn.ksmcbrigade.nhmj.transformers.ExportableClassFileTransformer;
+import cn.ksmcbrigade.nhmj.transformers.MethodHandlesLookupTransformer;
 import cn.ksmcbrigade.nhmj.transformers.ModSorterTransformer;
 import cn.ksmcbrigade.nhmj.transformers.dev.AccessibleObjectTransformer;
 import cn.ksmcbrigade.nhmj.transformers.dev.ReflectionTransformer;
@@ -32,6 +33,8 @@ public class NHMJMod {
     public static final String MODID = "nhmj";
     public static final Logger LOGGER = LogUtils.getLogger();
 
+    public static final boolean DEBUG = false;
+
     public NHMJMod() throws ClassNotFoundException, UnexpectedException {
         Instrumentation inst = MixinAgentUtils.getInst();
         if(inst==null) throw new UnexpectedException("Wait,What? How did you get there?");
@@ -39,15 +42,16 @@ public class NHMJMod {
         inst.addTransformer(new DeferredMixinConfigRegistrationTransformer(),true);
         inst.addTransformer(new ModSorterTransformer(),true);
 
+        inst.addTransformer(new MethodHandlesLookupTransformer(),true);
+
         if(!FMLLoader.isProduction()){
-            //from SuperTransformer 1.1.0
+            //only for development
+            //in protection env,use SuperAccessTransformer 1.1.0
             inst.addTransformer(new AccessibleObjectTransformer(),true);
             inst.addTransformer(new ReflectionTransformer(),true);
         }
 
         ExportableClassFileTransformer.retransformAllTransformers(inst);
-
-        System.setProperty("spring.devtools.restart.enabled=true","true");
 
         NeoForge.EVENT_BUS.register(this);
     }
