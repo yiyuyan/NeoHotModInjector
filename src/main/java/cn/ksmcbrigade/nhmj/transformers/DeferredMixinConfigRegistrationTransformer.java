@@ -1,23 +1,24 @@
 package cn.ksmcbrigade.nhmj.transformers;
 
+import net.neoforged.fml.loading.mixin.DeferredMixinConfigRegistration;
 import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.ClassVisitor;
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.MethodVisitor;
 import org.objectweb.asm.Opcodes;
 
-import java.lang.instrument.ClassFileTransformer;
 import java.security.ProtectionDomain;
 
-public class DeferredMixinConfigRegistrationTransformer implements ClassFileTransformer {
+public class DeferredMixinConfigRegistrationTransformer extends ExportableClassFileTransformer {
+
+    public DeferredMixinConfigRegistrationTransformer() {
+        super(DeferredMixinConfigRegistration.class);
+    }
 
     @Override
-    public byte[] transform(ClassLoader loader, String className,
+    public byte[] transformClass(ClassLoader loader, String className,
                             Class<?> classBeingRedefined, ProtectionDomain protectionDomain,
                             byte[] classfileBuffer) {
-        if (!"net/neoforged/fml/loading/mixin/DeferredMixinConfigRegistration".equals(className)) {
-            return null;
-        }
         ClassReader cr = new ClassReader(classfileBuffer);
         ClassWriter cw = new ClassWriter(cr, ClassWriter.COMPUTE_FRAMES);
         ClassVisitor cv = new ClassVisitor(Opcodes.ASM9, cw) {

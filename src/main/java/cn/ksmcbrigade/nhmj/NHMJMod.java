@@ -2,19 +2,18 @@ package cn.ksmcbrigade.nhmj;
 
 import cn.ksmcbrigade.mr.utils.mixin.MixinAgentUtils;
 import cn.ksmcbrigade.nhmj.transformers.DeferredMixinConfigRegistrationTransformer;
-import cn.ksmcbrigade.nhmj.transformers.ModuleLayerHandlerTransformer;
+import cn.ksmcbrigade.nhmj.transformers.ExportableClassFileTransformer;
+import cn.ksmcbrigade.nhmj.transformers.ModSorterTransformer;
 import cn.ksmcbrigade.nhmj.transformers.dev.AccessibleObjectTransformer;
 import cn.ksmcbrigade.nhmj.transformers.dev.ReflectionTransformer;
 import cn.ksmcbrigade.nhmj.utils.Injector;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.logging.LogUtils;
-import cpw.mods.modlauncher.ModuleLayerHandler;
 import net.minecraft.commands.Commands;
 import net.minecraft.network.chat.Component;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.Mod;
 import net.neoforged.fml.loading.FMLLoader;
-import net.neoforged.fml.loading.mixin.DeferredMixinConfigRegistration;
 import net.neoforged.neoforge.client.event.RegisterClientCommandsEvent;
 import net.neoforged.neoforge.common.NeoForge;
 import org.apache.commons.lang3.RandomStringUtils;
@@ -24,7 +23,6 @@ import javax.swing.*;
 import javax.swing.filechooser.FileNameExtensionFilter;
 import java.io.File;
 import java.lang.instrument.Instrumentation;
-import java.lang.instrument.UnmodifiableClassException;
 import java.nio.file.Path;
 import java.rmi.UnexpectedException;
 import java.util.Objects;
@@ -34,24 +32,22 @@ public class NHMJMod {
     public static final String MODID = "nhmj";
     public static final Logger LOGGER = LogUtils.getLogger();
 
-    public NHMJMod() throws UnmodifiableClassException, ClassNotFoundException, UnexpectedException {
+    public NHMJMod() throws ClassNotFoundException, UnexpectedException {
         Instrumentation inst = MixinAgentUtils.getInst();
         if(inst==null) throw new UnexpectedException("Wait,What? How did you get there?");
 
         inst.addTransformer(new DeferredMixinConfigRegistrationTransformer(),true);
-        inst.addTransformer(new ModuleLayerHandlerTransformer(),true);
-
-        inst.retransformClasses(DeferredMixinConfigRegistration.class);
-        inst.retransformClasses(ModuleLayerHandler.class);
+        inst.addTransformer(new ModSorterTransformer(),true);
 
         if(!FMLLoader.isProduction()){
             //from SuperTransformer 1.1.0
             inst.addTransformer(new AccessibleObjectTransformer(),true);
             inst.addTransformer(new ReflectionTransformer(),true);
-
-            inst.retransformClasses(Class.forName("jdk.internal.reflect.Reflection"));
-            inst.retransformClasses(Class.forName("java.lang.reflect.AccessibleObject"));
         }
+
+        ExportableClassFileTransformer.retransformAllTransformers(inst);
+
+        System.setProperty("spring.devtools.restart.enabled=true","true");
 
         NeoForge.EVENT_BUS.register(this);
     }

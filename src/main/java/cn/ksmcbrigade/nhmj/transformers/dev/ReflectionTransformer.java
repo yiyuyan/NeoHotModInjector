@@ -1,13 +1,18 @@
 package cn.ksmcbrigade.nhmj.transformers.dev;
 
-import java.lang.instrument.ClassFileTransformer;
 import java.security.ProtectionDomain;
+
+import cn.ksmcbrigade.nhmj.transformers.ExportableClassFileTransformer;
 import org.objectweb.asm.*;
 
-public class ReflectionTransformer implements ClassFileTransformer {
+public class ReflectionTransformer extends ExportableClassFileTransformer {
+
+    public ReflectionTransformer() throws ClassNotFoundException {
+        super(Class.forName("jdk.internal.reflect.Reflection"));
+    }
 
     @Override
-    public byte[] transform(ClassLoader loader,
+    public byte[] transformClass(ClassLoader loader,
                             String className,
                             Class<?> classBeingRedefined,
                             ProtectionDomain protectionDomain,

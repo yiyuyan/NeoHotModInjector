@@ -1,6 +1,6 @@
 package cn.ksmcbrigade.nhmj.utils;
 
-import cn.ksmcbrigade.mr.utils.InstUtils;
+import cn.ksmcbrigade.mr.Constants;
 import cn.ksmcbrigade.mr.utils.mixin.*;
 import cn.ksmcbrigade.nhmj.NHMJMod;
 import com.terraformersmc.mod_menu.ModMenu;
@@ -30,7 +30,6 @@ import org.spongepowered.asm.mixin.FabricUtil;
 import org.spongepowered.asm.mixin.Mixins;
 import org.spongepowered.asm.mixin.extensibility.IMixinConfig;
 import org.spongepowered.asm.mixin.transformer.Config;
-import org.spongepowered.tools.agent.MixinAgent;
 
 import java.lang.instrument.ClassDefinition;
 import java.lang.instrument.UnmodifiableClassException;
@@ -47,6 +46,7 @@ import java.util.stream.Collectors;
 
 import static cn.ksmcbrigade.mr.utils.UnsafeUtils.getFieldValue;
 import static cn.ksmcbrigade.mr.utils.UnsafeUtils.setFieldValue;
+import static cn.ksmcbrigade.mr.utils.mixin.MixinUtils.getTargetClasses;
 
 @SuppressWarnings({"UnstableApiUsage", "unchecked"})
 public class Injector {
@@ -85,27 +85,29 @@ public class Injector {
                 if(config!=null){
                     config.decorate(FabricUtil.KEY_MOD_ID,file.getMods().getFirst().getModId());
 
-                    MixinConfigUtils.onSelect(config);
-                    MixinConfigUtils.prepare(config,MixinAgentUtils.getFirstAgent());
-                    MixinProcessorUtils.addIntoProcessor(MixinProcessorUtils.getProcessor(MixinAgentUtils.getFirstAgent()),config);
+                    Config config1 = MixinUtils.toConfig(mixinConfig);
 
-                    List<Class<?>> targetClasses = new ArrayList<>();
-                    for (String unhandledTarget : MixinConfigUtils.getUnhandledTargets(config)) {
-                        targetClasses.addAll(MixinUtils.getTargetClasses(Class.forName(unhandledTarget)));
-                    }
-                    Objects.requireNonNull(MixinAgentUtils.getInst()).redefineClasses(targetClasses.stream().map((c)-> {
+                    IMixinConfig realConfig = config1.getConfig();
+                    MixinConfigUtils.onSelect(realConfig);
+                    MixinConfigUtils.prepare(realConfig,MixinAgentUtils.getFirstAgent());
+                    MixinProcessorUtils.addIntoProcessor(MixinProcessorUtils.getProcessor(MixinAgentUtils.getFirstAgent()),realConfig);
+
+                    System.setProperty("spring.devtools.restart.enabled=true","true");
+                    for (String s : MixinConfigUtils.getGlobalMixinList(realConfig)) {
+                        if(!s.startsWith(realConfig.getMixinPackage())) continue;
                         try {
-                            return new ClassDefinition(c,MixinTransformerUtils.transform(c));
-                        } catch (UnmodifiableClassException e) {
-                            NHMJMod.LOGGER.error("Failed to create class definition.",e);
-                            try {
-                                return new ClassDefinition(c, InstUtils.getClassBytes(MixinAgentUtils.getInst(),c));
-                            } catch (UnmodifiableClassException ex) {
-                                NHMJMod.LOGGER.error("Failed to get class bytes.",e);
-                                return new ClassDefinition(c, MixinAgent.ERROR_BYTECODE);
+                            for(Class<?> targetClass : getTargetClasses(Class.forName(s))) {
+                                try {
+                                    byte[] bytes = MixinTransformerUtils.transform(targetClass);
+                                    Objects.requireNonNull(MixinAgentUtils.getInst()).redefineClasses(new ClassDefinition(targetClass, bytes));
+                                } catch (ClassNotFoundException | UnmodifiableClassException e) {
+                                    Constants.LOGGER.error("Failed to transform and redefine {}.", targetClass, e);
+                                }
                             }
+                        } catch (Throwable e) {
+                            Constants.LOGGER.error("Failed to reapply mixin configs.", e);
                         }
-                    }).toList().toArray(new ClassDefinition[0]));
+                    }
                 }
             }
         }

@@ -1,18 +1,23 @@
 package cn.ksmcbrigade.nhmj.transformers.dev;
 
-import java.lang.instrument.ClassFileTransformer;
+import java.lang.reflect.AccessibleObject;
 import java.security.ProtectionDomain;
+
+import cn.ksmcbrigade.nhmj.transformers.ExportableClassFileTransformer;
 import org.objectweb.asm.*;
 
-public class AccessibleObjectTransformer implements ClassFileTransformer {
+public class AccessibleObjectTransformer extends ExportableClassFileTransformer {
+
+    public AccessibleObjectTransformer() {
+        super(AccessibleObject.class);
+    }
 
     @Override
-    public byte[] transform(ClassLoader loader,
+    public byte[] transformClass(ClassLoader loader,
                             String className,
                             Class<?> classBeingRedefined,
                             ProtectionDomain protectionDomain,
                             byte[] classfileBuffer) {
-        if (!"java/lang/reflect/AccessibleObject".equals(className)) return null;
 
         ClassReader cr = new ClassReader(classfileBuffer);
         ClassWriter cw = new ClassWriter(cr, ClassWriter.COMPUTE_FRAMES);

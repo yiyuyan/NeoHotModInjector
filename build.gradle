@@ -132,6 +132,10 @@ dependencies {
     implementation "maven.modrinth:sbpqhzIG:dUiI4lk6" //Better ModList
     implementation "maven.modrinth:OCQ3MOnJ:VYgl0iej" //MixinRuntime
     //implementation "maven.modrinth:GnOzvftf:BW7xb0aS" //SuperAccessTransformer
+
+    implementation("org.springframework.boot:spring-boot-devtools:4.1.0"){
+        exclude group: 'commons-logging', module: 'commons-logging'
+    }
 }
 
 // This block of code expands all declared replace properties in the specified resource targets.
