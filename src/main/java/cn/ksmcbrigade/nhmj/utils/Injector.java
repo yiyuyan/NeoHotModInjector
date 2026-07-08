@@ -259,6 +259,7 @@ public final class Injector {
 
     private static void addIntoMultiPackResManager(MultiPackResourceManager multiPackResourceManager, Pack pack) {
         try(PackResources packResources = pack.open()){
+            multiPackResourceManager.packs = new ArrayList<>(multiPackResourceManager.packs);
             multiPackResourceManager.packs.add(packResources);
             Map<String, FallbackResourceManager> map = new HashMap<>(multiPackResourceManager.namespacedManagers);
             Set<String> set = packResources.getNamespaces(PackType.CLIENT_RESOURCES);
