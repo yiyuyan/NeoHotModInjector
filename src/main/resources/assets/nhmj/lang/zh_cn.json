@@ -2,6 +2,6 @@
   "nhmj.configuration.mixinTransformMode": "Mixin 转换模式",
   "nhmj.configuration.title": "NeoHotModInjector 配置",
   "nhmj.configuration.section.nhmj.client.toml": "NeoHotModInjector 客户端配置",
-  "nhmj.configuration.mixinTransformMode.tooltip": "注入器的 mixin 转换模式.\n当处于 TRAMPOLINE 模式时,由 Mixin 转换好的类字节码将由 MixinHotSwap 再次进行转换以适应 Instrumentation::redefineClasses 的相关限制.\n当处于 NATIVE 模式时,模组将会使用 MinHook 绕过 VMFlag 限制并在运行时将 AllowEnhancedClassRedefinition 参数设置为 真.\nWARN: NATIVE 模式十分危险且仅适用于 Windows x64 with JetBrainsRuntime 21.0.11.",
+  "nhmj.configuration.mixinTransformMode.tooltip": "注入器的 mixin 转换模式.\n当处于 TRAMPOLINE 模式时,由 Mixin 转换好的类字节码将由 MixinHotSwap 再次进行转换以适应 Instrumentation::redefineClasses 的相关限制.\n当处于 NATIVE 模式时,模组将会使用 MinHook 绕过 VMFlag 限制并在运行时将 AllowEnhancedClassRedefinition 参数设置为 真.\nWARN: NATIVE 模式十分危险且仅适用于 Windows x64 with JetBrainsRuntime 21.0.11+1-b1163.116.",
   "nhmj.configuration.section.nhmj.client.toml.title": "NeoHotModInjector 客户端配置"
 }

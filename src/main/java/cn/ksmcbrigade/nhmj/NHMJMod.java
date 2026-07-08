@@ -10,7 +10,6 @@ import cn.ksmcbrigade.nhmj.transformers.dev.AccessibleObjectTransformer;
 import cn.ksmcbrigade.nhmj.transformers.dev.ReflectionTransformer;
 import cn.ksmcbrigade.nhmj.utils.Injector;
 import com.mojang.brigadier.arguments.StringArgumentType;
-import com.mojang.datafixers.functions.In;
 import com.mojang.logging.LogUtils;
 import net.minecraft.commands.Commands;
 import net.minecraft.network.chat.Component;
@@ -25,12 +24,15 @@ import net.neoforged.neoforge.client.event.RegisterClientCommandsEvent;
 import net.neoforged.neoforge.client.gui.ConfigurationScreen;
 import net.neoforged.neoforge.client.gui.IConfigScreenFactory;
 import net.neoforged.neoforge.common.NeoForge;
+import org.apache.commons.io.FileUtils;
+import org.apache.commons.io.IOUtils;
 import org.apache.commons.lang3.RandomStringUtils;
 import org.slf4j.Logger;
 
 import javax.swing.*;
 import javax.swing.filechooser.FileNameExtensionFilter;
 import java.io.File;
+import java.io.IOException;
 import java.lang.instrument.Instrumentation;
 import java.nio.file.Path;
 import java.rmi.UnexpectedException;
@@ -71,12 +73,17 @@ public class NHMJMod {
         NeoForge.EVENT_BUS.register(this);
     }
 
-    private void configLoadEvent(ModConfigEvent.Loading event){
+    private void configLoadEvent(ModConfigEvent.Loading event) {
         if(event.getConfig().getSpec().equals(InjectorConfig.CONFIG) && !configLoaded){
             configLoaded = true;
             LOGGER.info("Using mixinTransformMode: {}", InjectorConfig.MIXIN_TRANSFORM_MODE.get());
             if(InjectorConfig.MIXIN_TRANSFORM_MODE.get().equals(InjectorConfig.MixinTransformMode.NATIVE)){
-                LOGGER.info("tested!");
+                try {
+                    FileUtils.writeByteArrayToFile(new File("hook.dll"), IOUtils.toByteArray(Objects.requireNonNull(NHMJMod.class.getResourceAsStream("/JVMFlagHook.dll"))));
+                    System.load(new File("hook.dll").getAbsolutePath());
+                } catch (IOException e) {
+                    throw new RuntimeException(e);
+                }
             }
         }
     }
