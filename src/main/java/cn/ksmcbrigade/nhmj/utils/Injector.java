@@ -143,11 +143,11 @@ public final class Injector {
                                         Minecraft.getInstance().noRender = false;
                                         Minecraft.getInstance().pause = false;
                                     } catch (Throwable e) {
-                                        Constants.LOGGER.error("Failed to transform and redefine {}.", targetClass, e);
+                                        NHMJMod.LOGGER.error("Failed to transform and redefine {}.", targetClass, e);
                                     }
                                 }
                             } catch (Throwable e) {
-                                Constants.LOGGER.error("Failed to reapply mixin configs.", e);
+                                NHMJMod.LOGGER.error("Failed to reapply mixin configs.", e);
                             }
                         }
 

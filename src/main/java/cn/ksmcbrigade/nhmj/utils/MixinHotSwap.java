@@ -8,7 +8,10 @@ import org.slf4j.Logger;
 import java.io.IOException;
 import java.io.InputStream;
 import java.lang.instrument.*;
+import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
+import java.lang.invoke.MethodType;
+import java.lang.reflect.Field;
 import java.security.ProtectionDomain;
 import java.util.*;
 
@@ -49,6 +52,16 @@ public final class MixinHotSwap {
 
         MethodHandles.Lookup lookup = MethodHandles.privateLookupIn(clazz, MethodHandles.lookup());
         Class<?> extClass = lookup.defineClass(patch.extClassBytes);
+
+        for (SuperCallSite sc : patch.superCalls) {
+            Class<?> targetOwner = Class.forName(sc.targetOwner.replace('/', '.'), false, clazz.getClassLoader());
+            MethodType mt = MethodType.fromMethodDescriptorString(sc.desc, clazz.getClassLoader());
+            MethodHandle handle = lookup.findSpecial(targetOwner, sc.name, mt, clazz); // clazz = SlimeBlock.class
+            Field f = extClass.getDeclaredField("HANDLE$" + sc.wrapperName);
+            f.setAccessible(true);
+            f.set(null, handle);
+        }
+
         EXT_CLASSES.put(clazz, extClass);
 
         inst.redefineClasses(new ClassDefinition(clazz, patch.ownerBytes));
@@ -86,6 +99,7 @@ public final class MixinHotSwap {
     private static final class Patch {
         byte[] ownerBytes;
         byte[] extClassBytes;
+        List<SuperCallSite> superCalls = new ArrayList<>();
     }
 
     private static Patch buildTrampolinePatch(Class<?> clazz, byte[] oldBytes, byte[] newBytes,int id) {
@@ -135,6 +149,10 @@ public final class MixinHotSwap {
         List<MethodNode> bridges = new ArrayList<>();
         int bridgeCounter = 0;
 
+        // inside the loop that converts instance-added-methods to static, before/alongside rewriteMemberAccess:
+        List<SuperCallSite> superCalls = new ArrayList<>();
+        int superCounter = 0;
+
         // accessor helpers for each added instance field, generated on ext:
         //   static Object get$<name>(Object self)
         //   static void   set$<name>(Object self, Object v)
@@ -169,11 +187,54 @@ public final class MixinHotSwap {
                     "(L" + ownerInternal + ";" + m.desc.substring(1), // prepend self param
                     m.signature, m.exceptions == null ? null : m.exceptions.toArray(new String[0]));
             m.accept(staticVersion);
+
+            for (AbstractInsnNode insn : staticVersion.instructions.toArray()) {
+                if (insn instanceof MethodInsnNode mi
+                        && mi.getOpcode() == Opcodes.INVOKESPECIAL
+                        && !mi.name.equals("<init>")
+                        && !mi.owner.equals(ownerInternal)) {
+                    String wrapperName = "invokeSuper$" + mi.name + "$" + superCounter++;
+                    superCalls.add(new SuperCallSite(wrapperName, mi.owner, mi.name, mi.desc));
+                    mi.owner = extInternal;
+                    mi.name = wrapperName;
+                    mi.desc = "(L" + ownerInternal + ";" + mi.desc.substring(1);
+                    mi.setOpcode(Opcodes.INVOKESTATIC);
+                }
+            }
+
+            for (SuperCallSite sc : superCalls) {
+                FieldNode handleField = new FieldNode(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC,
+                        "HANDLE$" + sc.wrapperName, "Ljava/lang/invoke/MethodHandle;", null, null);
+                ext.fields.add(handleField); // NOT final — must be settable via reflection after defineClass
+
+                Type[] argTypes = Type.getArgumentTypes(sc.desc);
+                MethodNode wrapper = new MethodNode(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, sc.wrapperName,
+                        "(L" + ownerInternal + ";" + sc.desc.substring(1), null, null);
+                InsnList wi = wrapper.instructions;
+                wi.add(new FieldInsnNode(Opcodes.GETSTATIC, extInternal, "HANDLE$" + sc.wrapperName,
+                        "Ljava/lang/invoke/MethodHandle;"));
+                wi.add(new VarInsnNode(Opcodes.ALOAD, 0)); // self
+                int slot = 1;
+                for (Type t : argTypes) {
+                    wi.add(new VarInsnNode(t.getOpcode(Opcodes.ILOAD), slot));
+                    slot += t.getSize();
+                }
+                String invokeDesc = "(L" + ownerInternal + ";" + sc.desc.substring(1);
+                wi.add(new MethodInsnNode(Opcodes.INVOKEVIRTUAL, "java/lang/invoke/MethodHandle",
+                        "invoke", invokeDesc, false));
+                wi.add(new InsnNode(Type.getReturnType(sc.desc).getOpcode(Opcodes.IRETURN)));
+                wrapper.maxStack = argTypes.length + 2;
+                wrapper.maxLocals = slot;
+                ext.methods.add(wrapper);
+            }
+
             rewriteMemberAccess(staticVersion.instructions, ownerInternal, extInternal, addedMethodKeys, addedFieldKeys,bridgeMap);
             //staticVersion.maxStack = m.maxStack + 1;
             //staticVersion.maxLocals = m.maxLocals + 1;
             ext.methods.add(staticVersion);
         }
+
+
 
         ClassWriter extWriter = new SafeClassWriter(ClassWriter.COMPUTE_FRAMES | ClassWriter.COMPUTE_MAXS, clazz.getClassLoader());
         ext.accept(extWriter);
@@ -261,6 +322,7 @@ public final class MixinHotSwap {
         Patch patch = new Patch();
         patch.ownerBytes = ownerWriter.toByteArray();
         patch.extClassBytes = extWriter.toByteArray();
+        patch.superCalls = superCalls;
         return patch;
     }
 
@@ -559,5 +621,10 @@ public final class MixinHotSwap {
             }
             return null;
         }
+    }
+
+    private static final class SuperCallSite {
+        final String wrapperName, targetOwner, name, desc;
+        SuperCallSite(String w, String o, String n, String d) { wrapperName=w; targetOwner=o; name=n; desc=d; }
     }
 }
