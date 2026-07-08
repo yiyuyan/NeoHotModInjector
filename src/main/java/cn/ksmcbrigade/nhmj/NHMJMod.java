@@ -33,10 +33,8 @@ import javax.swing.*;
 import javax.swing.filechooser.FileNameExtensionFilter;
 import java.io.BufferedReader;
 import java.io.File;
-import java.io.IOException;
 import java.io.InputStreamReader;
 import java.lang.instrument.Instrumentation;
-import java.lang.management.RuntimeMXBean;
 import java.nio.file.Path;
 import java.rmi.UnexpectedException;
 import java.util.Objects;
@@ -85,20 +83,29 @@ public class NHMJMod {
                     FileUtils.writeByteArrayToFile(new File("hook.dll"), IOUtils.toByteArray(Objects.requireNonNull(NHMJMod.class.getResourceAsStream("/JVMFlagHook.dll"))));
                     System.load(new File("hook.dll").getAbsolutePath());
 
+                    System.out.println(System.getProperty("java.home")+"/bin/jinfo");
+
                     Process process = new ProcessBuilder(
-                            new File(System.getProperty("java.home")+"/bin/jinfo").getAbsolutePath()
+                            new File(System.getProperty("java.home"),"bin/jinfo").getAbsolutePath()
                             ,"-flag"
-                            , "+AllowEnhancedClassRedefinition"
-                            ,String.valueOf(ProcessHandle.current().pid()))
-                            .inheritIO().start();
+                            ,"+AllowEnhancedClassRedefinition"
+                            ,String.valueOf(ProcessHandle.current().pid())
+                    ).start();
                     process.waitFor();
-                    BufferedReader output = new BufferedReader(new InputStreamReader(process.getInputStream()));
-                    String readLine = output.readLine();
-                    if (readLine.contains("VM Flags:")){
+
+                    BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()));
+                    StringBuilder output = new StringBuilder();
+                    String line;
+                    while ((line = reader.readLine()) != null) {
+                        output.append(line).append("\n");
+                    }
+
+                    if (process.exitValue()==0){
                         LOGGER.info("Enable AllowEnhancedClassRedefinition successfully!");
+                        LOGGER.info("Output: \n{}",output);
                     }
                     else{
-                        throw new RuntimeException("Failed to enable AllowEnhancedClassRedefinition runtime. readLine: "+readLine);
+                        throw new RuntimeException("Failed to enable AllowEnhancedClassRedefinition runtime. output:\n"+output);
                     }
                 } catch (Throwable e) {
                     throw new RuntimeException("Failed to enable AllowEnhancedClassRedefinition runtime!",e);
