@@ -13,6 +13,11 @@ import cpw.mods.jarhandling.SecureJar;
 import it.unimi.dsi.fastutil.floats.FloatUnaryOperator;
 import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.Minecraft;
+import net.minecraft.resources.ResourceLocation;
+import net.minecraft.server.packs.PackResources;
+import net.minecraft.server.packs.PackType;
+import net.minecraft.server.packs.repository.Pack;
+import net.minecraft.server.packs.resources.*;
 import net.neoforged.fml.*;
 import net.neoforged.fml.event.lifecycle.FMLConstructModEvent;
 import net.neoforged.fml.loading.FMLLoader;
@@ -25,6 +30,7 @@ import net.neoforged.fml.loading.moddiscovery.ModInfo;
 import net.neoforged.fml.loading.moddiscovery.ModValidator;
 import net.neoforged.fml.loading.moddiscovery.readers.JarModsDotTomlModFileReader;
 import net.neoforged.fml.loading.modscan.BackgroundScanHandler;
+import net.neoforged.neoforge.resource.ResourcePackLoader;
 import net.neoforged.neoforgespi.language.IModFileInfo;
 import net.neoforged.neoforgespi.language.IModInfo;
 import net.neoforged.neoforgespi.locating.IModFile;
@@ -45,6 +51,7 @@ import java.net.URI;
 import java.nio.file.Path;
 import java.rmi.UnexpectedException;
 import java.util.*;
+import java.util.function.Predicate;
 import java.util.stream.Collectors;
 
 import static cn.ksmcbrigade.mr.utils.UnsafeUtils.getFieldValue;
@@ -90,6 +97,11 @@ public final class Injector {
         LoadingModList loadingModList = backgroundScanHandler.getLoadingModList();
 
         addToGameLayer(loadingModList);
+
+        for (ModFileInfo file : loadingModList.getModFiles()) {
+            addIntoResManager(file.getFile());
+        }
+
 
         try {
             for (ModFileInfo file : loadingModList.getModFiles()) {
@@ -221,6 +233,56 @@ public final class Injector {
             modContainer.acceptEvent(new FMLConstructModEvent(modContainer, workQueue));
             addIntoBTL(modContainer);
             ModLoadingContext.get().setActiveContainer(null);
+        }
+    }
+
+    private static void addIntoResManager(IModFile modFile) {
+        Minecraft mc = Minecraft.getInstance();
+        ResourceManager resourceManager = mc.getResourceManager();
+        Pack.ResourcesSupplier supplier = ResourcePackLoader.createPackForMod(modFile.getModFileInfo());
+        Map<IModFile,Pack.ResourcesSupplier> map = new HashMap<>();
+        map.put(modFile,supplier);
+        ResourcePackLoader.packFinder(map,(pack)->{
+            if(resourceManager instanceof ReloadableResourceManager reloadableResourceManager){
+                if(reloadableResourceManager.resources instanceof MultiPackResourceManager multiPackResourceManager){
+                    addIntoMultiPackResManager(multiPackResourceManager,pack);
+                }
+            }
+            else if(resourceManager instanceof MultiPackResourceManager multiPackResourceManager){
+                addIntoMultiPackResManager(multiPackResourceManager,pack);
+            }
+            else if(resourceManager instanceof FallbackResourceManager fallbackResourceManager){
+                fallbackResourceManager.push(pack.open());
+            }
+        },PackType.CLIENT_RESOURCES);
+    }
+
+    private static void addIntoMultiPackResManager(MultiPackResourceManager multiPackResourceManager, Pack pack) {
+        try(PackResources packResources = pack.open()){
+            multiPackResourceManager.packs.add(packResources);
+            Map<String, FallbackResourceManager> map = new HashMap<>(multiPackResourceManager.namespacedManagers);
+            Set<String> set = packResources.getNamespaces(PackType.CLIENT_RESOURCES);
+            ResourceFilterSection resourcefiltersection = multiPackResourceManager.getPackFilterSection(packResources);
+            Predicate<ResourceLocation> predicate = resourcefiltersection != null ? (p_215474_) -> resourcefiltersection.isPathFiltered(p_215474_.getPath()) : null;
+            for (String s : set.stream().distinct().toList()) {
+                boolean flag = set.contains(s);
+                boolean flag1 = resourcefiltersection != null && resourcefiltersection.isNamespaceFiltered(s);
+                if (flag || flag1) {
+                    FallbackResourceManager fallbackresourcemanager = map.computeIfAbsent(s, s1 -> new FallbackResourceManager(PackType.CLIENT_RESOURCES, s1));
+
+                    if (flag && flag1) {
+                        fallbackresourcemanager.push(packResources, predicate);
+                    } else if (flag) {
+                        fallbackresourcemanager.push(packResources);
+                    } else {
+                        fallbackresourcemanager.pushFilterOnly(packResources.packId(), predicate);
+                    }
+                }
+            }
+            multiPackResourceManager.namespacedManagers = map;
+        }
+        catch (Throwable throwable){
+            throw new RuntimeException("Failed to add pack into the multipack resource manager.",throwable);
         }
     }
 

@@ -11,7 +11,9 @@ plugins {
 }
 apply plugin: 'io.github.yiyuyan.sat-plugin'
 
-superAccessTransformer {}
+superAccessTransformer {
+    packageName("net.neoforged.neoforge.resource".replace(".","/"))
+}
 
 version = mod_version
 group = mod_group_id

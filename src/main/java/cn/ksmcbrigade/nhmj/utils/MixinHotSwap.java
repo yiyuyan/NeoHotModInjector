@@ -111,7 +111,8 @@ public final class MixinHotSwap {
         ext.version = oldNode.version;
         ext.access = Opcodes.ACC_PUBLIC | Opcodes.ACC_SUPER | Opcodes.ACC_FINAL;
         ext.name = extInternal;
-        ext.superName = "java/lang/Object";
+        ext.superName = oldNode.superName;
+        ext.interfaces = oldNode.interfaces;
 
         // side table: instance -> Object[] slot per added instance field, keyed by field name
         // (kept simple: one shared WeakHashMap<Object,Map<String,Object>> per owner)
@@ -210,6 +211,7 @@ public final class MixinHotSwap {
             for (AbstractInsnNode insn : m.instructions) {
                 if (insn instanceof MethodInsnNode mi && mi.getOpcode() == Opcodes.INVOKESPECIAL) {
                     if (mi.name.equals("<init>")) continue;
+                    if (mi.owner.equals(ownerInternal) && addedMethodKeys.contains(mi.name + mi.desc)) continue;
                     String bridgeKey = mi.owner + "." + mi.name + mi.desc;
                     if (!bridgeMap.containsKey(bridgeKey)) {
                         String bridgeName = "$$bridge$" + (bridgeCounter++);
