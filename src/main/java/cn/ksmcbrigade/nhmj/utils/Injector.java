@@ -1,9 +1,9 @@
 package cn.ksmcbrigade.nhmj.utils;
 
-import cn.ksmcbrigade.mr.Constants;
 import cn.ksmcbrigade.mr.utils.UnsafeUtils;
 import cn.ksmcbrigade.mr.utils.mixin.*;
 import cn.ksmcbrigade.nhmj.NHMJMod;
+import cn.ksmcbrigade.nhmj.config.InjectorConfig;
 import com.terraformersmc.mod_menu.ModMenu;
 import com.terraformersmc.mod_menu.util.mod.neoforge.NeoforgeMod;
 import cpw.mods.cl.JarModuleFinder;
@@ -42,6 +42,7 @@ import org.spongepowered.asm.mixin.extensibility.IMixinConfig;
 import org.spongepowered.asm.mixin.transformer.Config;
 import org.spongepowered.asm.mixin.transformer.ext.Extensions;
 
+import java.lang.instrument.ClassDefinition;
 import java.lang.module.*;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
@@ -134,7 +135,13 @@ public final class Injector {
                                         Minecraft.getInstance().timer = new DeltaTracker.Timer(0,0L, FloatUnaryOperator.identity());
                                         Minecraft.getInstance().timer.paused = true;
 
-                                        MixinHotSwap.replaceMixedClasses(targetClass,bytes,MixinAgentUtils.getInst(),null);
+                                        if(InjectorConfig.MIXIN_TRANSFORM_MODE.get().equals(InjectorConfig.MixinTransformMode.TRAMPOLINE)){
+                                            MixinHotSwap.replaceMixedClasses(targetClass,bytes,MixinAgentUtils.getInst(),null);
+                                        }
+                                        else{
+                                            Objects.requireNonNull(MixinAgentUtils.getInst()).redefineClasses(new ClassDefinition(targetClass,bytes));
+                                        }
+
                                         ModuleUtilsAccess.addAllReadsForFMLGameLayerModules();
 
                                         //GLFW.glfwShowWindow(Minecraft.getInstance().window.window);
@@ -243,16 +250,17 @@ public final class Injector {
         Map<IModFile,Pack.ResourcesSupplier> map = new HashMap<>();
         map.put(modFile,supplier);
         ResourcePackLoader.packFinder(map,(pack)->{
-            if(resourceManager instanceof ReloadableResourceManager reloadableResourceManager){
-                if(reloadableResourceManager.resources instanceof MultiPackResourceManager multiPackResourceManager){
-                    addIntoMultiPackResManager(multiPackResourceManager,pack);
+            switch (resourceManager) {
+                case ReloadableResourceManager reloadableResourceManager -> {
+                    if (reloadableResourceManager.resources instanceof MultiPackResourceManager multiPackResourceManager) {
+                        addIntoMultiPackResManager(multiPackResourceManager, pack);
+                    }
                 }
-            }
-            else if(resourceManager instanceof MultiPackResourceManager multiPackResourceManager){
-                addIntoMultiPackResManager(multiPackResourceManager,pack);
-            }
-            else if(resourceManager instanceof FallbackResourceManager fallbackResourceManager){
-                fallbackResourceManager.push(pack.open());
+                case MultiPackResourceManager multiPackResourceManager ->
+                        addIntoMultiPackResManager(multiPackResourceManager, pack);
+                case FallbackResourceManager fallbackResourceManager -> fallbackResourceManager.push(pack.open());
+                default -> {
+                }
             }
         },PackType.CLIENT_RESOURCES);
     }

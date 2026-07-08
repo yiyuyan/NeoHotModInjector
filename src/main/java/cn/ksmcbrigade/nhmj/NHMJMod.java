@@ -1,6 +1,7 @@
 package cn.ksmcbrigade.nhmj;
 
 import cn.ksmcbrigade.mr.utils.mixin.MixinAgentUtils;
+import cn.ksmcbrigade.nhmj.config.InjectorConfig;
 import cn.ksmcbrigade.nhmj.transformers.DeferredMixinConfigRegistrationTransformer;
 import cn.ksmcbrigade.nhmj.transformers.ExportableClassFileTransformer;
 import cn.ksmcbrigade.nhmj.transformers.MethodHandlesLookupTransformer;
@@ -9,13 +10,20 @@ import cn.ksmcbrigade.nhmj.transformers.dev.AccessibleObjectTransformer;
 import cn.ksmcbrigade.nhmj.transformers.dev.ReflectionTransformer;
 import cn.ksmcbrigade.nhmj.utils.Injector;
 import com.mojang.brigadier.arguments.StringArgumentType;
+import com.mojang.datafixers.functions.In;
 import com.mojang.logging.LogUtils;
 import net.minecraft.commands.Commands;
 import net.minecraft.network.chat.Component;
+import net.neoforged.bus.api.IEventBus;
 import net.neoforged.bus.api.SubscribeEvent;
+import net.neoforged.fml.ModContainer;
 import net.neoforged.fml.common.Mod;
+import net.neoforged.fml.config.ModConfig;
+import net.neoforged.fml.event.config.ModConfigEvent;
 import net.neoforged.fml.loading.FMLLoader;
 import net.neoforged.neoforge.client.event.RegisterClientCommandsEvent;
+import net.neoforged.neoforge.client.gui.ConfigurationScreen;
+import net.neoforged.neoforge.client.gui.IConfigScreenFactory;
 import net.neoforged.neoforge.common.NeoForge;
 import org.apache.commons.lang3.RandomStringUtils;
 import org.slf4j.Logger;
@@ -35,7 +43,9 @@ public class NHMJMod {
 
     public static final boolean DEBUG = false;
 
-    public NHMJMod() throws ClassNotFoundException, UnexpectedException {
+    public static boolean configLoaded = false;
+
+    public NHMJMod(IEventBus eventBus, ModContainer modContainer) throws ClassNotFoundException, UnexpectedException {
         Instrumentation inst = MixinAgentUtils.getInst();
         if(inst==null) throw new UnexpectedException("Wait,What? How did you get there?");
 
@@ -53,7 +63,22 @@ public class NHMJMod {
 
         ExportableClassFileTransformer.retransformAllTransformers(inst);
 
+        modContainer.registerConfig(ModConfig.Type.CLIENT, InjectorConfig.CONFIG);
+        modContainer.registerExtensionPoint(IConfigScreenFactory.class, ConfigurationScreen::new);
+
+        eventBus.addListener(this::configLoadEvent);
+
         NeoForge.EVENT_BUS.register(this);
+    }
+
+    private void configLoadEvent(ModConfigEvent.Loading event){
+        if(event.getConfig().getSpec().equals(InjectorConfig.CONFIG) && !configLoaded){
+            configLoaded = true;
+            LOGGER.info("Using mixinTransformMode: {}", InjectorConfig.MIXIN_TRANSFORM_MODE.get());
+            if(InjectorConfig.MIXIN_TRANSFORM_MODE.get().equals(InjectorConfig.MixinTransformMode.NATIVE)){
+                LOGGER.info("tested!");
+            }
+        }
     }
 
     @SubscribeEvent

@@ -1,5 +1,7 @@
 {
-  "itemGroup.nhmj": "Example Mod Tab",
-  "block.nhmj.example_block": "Example Block",
-  "item.nhmj.example_item": "Example Item"
+  "nhmj.configuration.mixinTransformMode": "Mixin Transform Mode",
+  "nhmj.configuration.title": "NeoHotModInjector Configs",
+  "nhmj.configuration.section.nhmj.client.toml": "HotModInjectorClientConfig",
+  "nhmj.configuration.mixinTransformMode.tooltip": "The transform mode for Injector.\nWhen the TRAMPOLINE mode is selected,the transformed class bytes by mixin will be transformed again by MixinHotSwap to fit the arguments of Instrumentation::redefineClasses.\nWhen the NATIVE mode is selected,HotModInjectorMod will use MinHook to across the VMFlag restrictions and set AllowEnhancedClassRedefinition to true runtime.\nWARN: The NATIVE mode is dangerous and only suit for Windows x64 with JetBrainsRuntime 21.0.11.",
+  "nhmj.configuration.section.nhmj.client.toml.title": "HotModInjectorClientConfigs"
 }
