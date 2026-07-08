@@ -31,9 +31,12 @@ import org.slf4j.Logger;
 
 import javax.swing.*;
 import javax.swing.filechooser.FileNameExtensionFilter;
+import java.io.BufferedReader;
 import java.io.File;
 import java.io.IOException;
+import java.io.InputStreamReader;
 import java.lang.instrument.Instrumentation;
+import java.lang.management.RuntimeMXBean;
 import java.nio.file.Path;
 import java.rmi.UnexpectedException;
 import java.util.Objects;
@@ -81,8 +84,24 @@ public class NHMJMod {
                 try {
                     FileUtils.writeByteArrayToFile(new File("hook.dll"), IOUtils.toByteArray(Objects.requireNonNull(NHMJMod.class.getResourceAsStream("/JVMFlagHook.dll"))));
                     System.load(new File("hook.dll").getAbsolutePath());
-                } catch (IOException e) {
-                    throw new RuntimeException(e);
+
+                    Process process = new ProcessBuilder(
+                            new File(System.getProperty("java.home")+"/bin/jinfo").getAbsolutePath()
+                            ,"-flag"
+                            , "+AllowEnhancedClassRedefinition"
+                            ,String.valueOf(ProcessHandle.current().pid()))
+                            .inheritIO().start();
+                    process.waitFor();
+                    BufferedReader output = new BufferedReader(new InputStreamReader(process.getInputStream()));
+                    String readLine = output.readLine();
+                    if (readLine.contains("VM Flags:")){
+                        LOGGER.info("Enable AllowEnhancedClassRedefinition successfully!");
+                    }
+                    else{
+                        throw new RuntimeException("Failed to enable AllowEnhancedClassRedefinition runtime. readLine: "+readLine);
+                    }
+                } catch (Throwable e) {
+                    throw new RuntimeException("Failed to enable AllowEnhancedClassRedefinition runtime!",e);
                 }
             }
         }
