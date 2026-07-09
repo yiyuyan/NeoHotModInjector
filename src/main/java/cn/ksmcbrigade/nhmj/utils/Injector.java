@@ -4,6 +4,7 @@ import cn.ksmcbrigade.mr.utils.UnsafeUtils;
 import cn.ksmcbrigade.mr.utils.mixin.*;
 import cn.ksmcbrigade.nhmj.NHMJMod;
 import cn.ksmcbrigade.nhmj.config.InjectorConfig;
+import cn.ksmcbrigade.nhmj.screens.NoRenderLoadingOverlay;
 import com.terraformersmc.mod_menu.ModMenu;
 import com.terraformersmc.mod_menu.util.mod.neoforge.NeoforgeMod;
 import cpw.mods.cl.JarModuleFinder;
@@ -11,22 +12,16 @@ import cpw.mods.cl.ModuleClassLoader;
 import cpw.mods.jarhandling.JarContents;
 import cpw.mods.jarhandling.SecureJar;
 import it.unimi.dsi.fastutil.floats.FloatUnaryOperator;
+import net.minecraft.Util;
 import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.ResourceLoadStateTracker;
 import net.minecraft.client.gui.components.toasts.SystemToast;
 import net.minecraft.client.gui.components.toasts.ToastComponent;
-import net.minecraft.client.resources.language.I18n;
+import net.minecraft.client.gui.screens.LoadingOverlay;
 import net.minecraft.network.chat.Component;
-import net.minecraft.resources.ResourceLocation;
-import net.minecraft.server.packs.PackLocationInfo;
 import net.minecraft.server.packs.PackResources;
 import net.minecraft.server.packs.PackType;
-import net.minecraft.server.packs.repository.KnownPack;
-import net.minecraft.server.packs.repository.Pack;
-import net.minecraft.server.packs.repository.PackSource;
-import net.minecraft.server.packs.repository.RepositorySource;
-import net.minecraft.server.packs.resources.*;
-import net.minecraft.world.level.DataPackConfig;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.fml.*;
 import net.neoforged.fml.config.ConfigTracker;
@@ -51,7 +46,6 @@ import net.neoforged.neoforgespi.language.IModFileInfo;
 import net.neoforged.neoforgespi.language.IModInfo;
 import net.neoforged.neoforgespi.locating.IModFile;
 import net.neoforged.neoforgespi.locating.ModFileDiscoveryAttributes;
-import org.apache.maven.artifact.versioning.ArtifactVersion;
 import org.jetbrains.annotations.NotNull;
 import org.slf4j.Logger;
 import org.slf4j.Marker;
@@ -62,7 +56,6 @@ import org.spongepowered.asm.mixin.extensibility.IMixinConfig;
 import org.spongepowered.asm.mixin.transformer.Config;
 import org.spongepowered.asm.mixin.transformer.ext.Extensions;
 
-import java.io.IOException;
 import java.lang.instrument.ClassDefinition;
 import java.lang.module.*;
 import java.lang.reflect.Constructor;
@@ -73,14 +66,13 @@ import java.net.URI;
 import java.nio.file.Path;
 import java.rmi.UnexpectedException;
 import java.util.*;
-import java.util.function.Consumer;
-import java.util.function.Predicate;
+import java.util.concurrent.CompletableFuture;
 import java.util.stream.Collectors;
-import java.util.stream.Stream;
 
 import static cn.ksmcbrigade.mr.utils.UnsafeUtils.getFieldValue;
 import static cn.ksmcbrigade.mr.utils.UnsafeUtils.setFieldValue;
 import static cn.ksmcbrigade.nhmj.NHMJMod.LOGGER;
+import static net.minecraft.client.Minecraft.RESOURCE_RELOAD_INITIAL_TASK;
 import static net.neoforged.neoforge.resource.ResourcePackLoader.*;
 
 @SuppressWarnings({"UnstableApiUsage", "unchecked"})
@@ -360,7 +352,32 @@ public final class Injector {
 
         ResourcePackLoader.populatePackRepository(mc.resourcePackRepository, PackType.CLIENT_RESOURCES, false);
         mc.resourcePackRepository.reload();
-        mc.reloadResourcePacks();
+        reloadResPacksNoOverly();
+    }
+
+    private static void reloadResPacksNoOverly(){
+        Minecraft mc = Minecraft.getInstance();
+        boolean error = false;
+        if (mc.pendingReload == null) {
+            CompletableFuture<Void> completablefuture = new CompletableFuture<>();
+            if (!error && mc.overlay instanceof LoadingOverlay) {
+                mc.pendingReload = completablefuture;
+            } else {
+                mc.resourcePackRepository.reload();
+                List<PackResources> list = mc.resourcePackRepository.openAllSelected();
+                if (!error) {
+                    mc.reloadStateTracker.startReload(ResourceLoadStateTracker.ReloadReason.MANUAL, list);
+                }
+
+                mc.setOverlay(new NoRenderLoadingOverlay(mc.resourceManager.createReload(Util.backgroundExecutor(), Minecraft.getInstance(), RESOURCE_RELOAD_INITIAL_TASK, list), (p_299767_) -> Util.ifElse(p_299767_, (p_314392_) -> mc.rollbackResourcePacks(p_314392_, null), () -> {
+                    mc.levelRenderer.allChanged();
+                    mc.reloadStateTracker.finishReload();
+                    mc.downloadedPackSource.onReloadSuccess();
+                    completablefuture.complete(null);
+                    mc.onResourceLoadFinished(null);
+                }), !error));
+            }
+        }
     }
 
     private static void addIntoBTL(ModContainer modContainer) {
