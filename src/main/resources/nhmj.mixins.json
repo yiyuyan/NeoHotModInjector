@@ -4,7 +4,8 @@
   "package": "cn.ksmcbrigade.nhmj.mixin",
   "compatibilityLevel": "JAVA_21",
   "mixins": [
-    "ex.ModConfigSpecMixin"
+    "ex.ModConfigSpecMixin",
+    "fix.ChatComponentMixin"
   ],
   "client": [
     "MinecraftMixin",

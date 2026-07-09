@@ -4,7 +4,6 @@ import cn.ksmcbrigade.mr.utils.UnsafeUtils;
 import cn.ksmcbrigade.mr.utils.mixin.*;
 import cn.ksmcbrigade.nhmj.NHMJMod;
 import cn.ksmcbrigade.nhmj.config.InjectorConfig;
-import cn.ksmcbrigade.nhmj.screens.NoRenderLoadingOverlay;
 import com.terraformersmc.mod_menu.ModMenu;
 import com.terraformersmc.mod_menu.util.mod.neoforge.NeoforgeMod;
 import cpw.mods.cl.JarModuleFinder;
@@ -12,15 +11,11 @@ import cpw.mods.cl.ModuleClassLoader;
 import cpw.mods.jarhandling.JarContents;
 import cpw.mods.jarhandling.SecureJar;
 import it.unimi.dsi.fastutil.floats.FloatUnaryOperator;
-import net.minecraft.Util;
 import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.ResourceLoadStateTracker;
 import net.minecraft.client.gui.components.toasts.SystemToast;
 import net.minecraft.client.gui.components.toasts.ToastComponent;
-import net.minecraft.client.gui.screens.LoadingOverlay;
 import net.minecraft.network.chat.Component;
-import net.minecraft.server.packs.PackResources;
 import net.minecraft.server.packs.PackType;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.fml.*;
@@ -66,13 +61,11 @@ import java.net.URI;
 import java.nio.file.Path;
 import java.rmi.UnexpectedException;
 import java.util.*;
-import java.util.concurrent.CompletableFuture;
 import java.util.stream.Collectors;
 
 import static cn.ksmcbrigade.mr.utils.UnsafeUtils.getFieldValue;
 import static cn.ksmcbrigade.mr.utils.UnsafeUtils.setFieldValue;
 import static cn.ksmcbrigade.nhmj.NHMJMod.LOGGER;
-import static net.minecraft.client.Minecraft.RESOURCE_RELOAD_INITIAL_TASK;
 import static net.neoforged.neoforge.resource.ResourcePackLoader.*;
 
 @SuppressWarnings({"UnstableApiUsage", "unchecked"})
@@ -352,32 +345,7 @@ public final class Injector {
 
         ResourcePackLoader.populatePackRepository(mc.resourcePackRepository, PackType.CLIENT_RESOURCES, false);
         mc.resourcePackRepository.reload();
-        reloadResPacksNoOverly();
-    }
-
-    private static void reloadResPacksNoOverly(){
-        Minecraft mc = Minecraft.getInstance();
-        boolean error = false;
-        if (mc.pendingReload == null) {
-            CompletableFuture<Void> completablefuture = new CompletableFuture<>();
-            if (!error && mc.overlay instanceof LoadingOverlay) {
-                mc.pendingReload = completablefuture;
-            } else {
-                mc.resourcePackRepository.reload();
-                List<PackResources> list = mc.resourcePackRepository.openAllSelected();
-                if (!error) {
-                    mc.reloadStateTracker.startReload(ResourceLoadStateTracker.ReloadReason.MANUAL, list);
-                }
-
-                mc.setOverlay(new NoRenderLoadingOverlay(mc.resourceManager.createReload(Util.backgroundExecutor(), Minecraft.getInstance(), RESOURCE_RELOAD_INITIAL_TASK, list), (p_299767_) -> Util.ifElse(p_299767_, (p_314392_) -> mc.rollbackResourcePacks(p_314392_, null), () -> {
-                    mc.levelRenderer.allChanged();
-                    mc.reloadStateTracker.finishReload();
-                    mc.downloadedPackSource.onReloadSuccess();
-                    completablefuture.complete(null);
-                    mc.onResourceLoadFinished(null);
-                }), !error));
-            }
-        }
+        mc.reloadResourcePacks();
     }
 
     private static void addIntoBTL(ModContainer modContainer) {

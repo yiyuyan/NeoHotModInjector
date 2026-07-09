@@ -11,8 +11,6 @@ public class MinecraftMixin {
 
     @Inject(method = "tick",at = @At("TAIL"))
     public void tick(CallbackInfo ci){
-        if(Boolean.parseBoolean(System.getProperty("java.awt.headless"))){
-            System.setProperty("java.awt.headless", "false");
-        }
+
     }
 }
