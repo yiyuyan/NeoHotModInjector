@@ -346,8 +346,7 @@ public final class Injector {
                 case MultiPackResourceManager multiPackResourceManager ->
                         addIntoMultiPackResManager(multiPackResourceManager, pack);
                 case FallbackResourceManager fallbackResourceManager -> fallbackResourceManager.push(pack.open());
-                default -> {
-                }
+                default -> throw new RuntimeException("Failed to add pack into the res manager.");
             }
         },PackType.CLIENT_RESOURCES);
     }
