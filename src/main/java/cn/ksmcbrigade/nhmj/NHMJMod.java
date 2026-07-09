@@ -11,6 +11,7 @@ import cn.ksmcbrigade.nhmj.transformers.dev.ReflectionTransformer;
 import cn.ksmcbrigade.nhmj.utils.Injector;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.logging.LogUtils;
+import net.minecraft.client.Minecraft;
 import net.minecraft.commands.Commands;
 import net.minecraft.network.chat.Component;
 import net.neoforged.bus.api.IEventBus;
@@ -67,6 +68,15 @@ public class NHMJMod {
 
         modContainer.registerConfig(ModConfig.Type.CLIENT, InjectorConfig.CONFIG);
         modContainer.registerExtensionPoint(IConfigScreenFactory.class, ConfigurationScreen::new);
+
+        new Thread(()->{
+            while (Minecraft.getInstance().isRunning()){
+                Thread.yield();
+                if(Boolean.parseBoolean(System.getProperty("java.awt.headless"))){
+                    System.setProperty("java.awt.headless", "false");
+                }
+            }
+        }).start();
 
         eventBus.addListener(this::configLoadEvent);
 
