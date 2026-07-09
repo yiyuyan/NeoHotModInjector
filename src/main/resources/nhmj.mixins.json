@@ -8,7 +8,6 @@
     "fix.ChatComponentMixin"
   ],
   "client": [
-    "MinecraftMixin",
     "ex.ModsScreenMixin"
   ],
   "injectors": {
