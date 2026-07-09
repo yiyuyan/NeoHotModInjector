@@ -66,8 +66,6 @@ import java.util.stream.Collectors;
 
 import static cn.ksmcbrigade.mr.utils.UnsafeUtils.getFieldValue;
 import static cn.ksmcbrigade.mr.utils.UnsafeUtils.setFieldValue;
-import static cn.ksmcbrigade.mr.utils.mixin.MixinProcessorUtils.*;
-import static cn.ksmcbrigade.mr.utils.mixin.MixinUtils.getTargetClasses;
 
 @SuppressWarnings({"UnstableApiUsage", "unchecked"})
 public final class Injector {
@@ -138,6 +136,8 @@ public final class Injector {
 
         try {
 
+            Set<Class<?>> targetClasses = new HashSet<>();
+            
             for (ModFileInfo file : loadingModList.getModFiles()) {
                 for (String mixinConfig : file.getFile().getMixinConfigs()) {
                     Mixins.addConfiguration(mixinConfig);
@@ -150,49 +150,55 @@ public final class Injector {
                         MixinConfigUtils.prepare(config,MixinAgentUtils.getFirstAgent());
                         MixinProcessorUtils.addIntoProcessor(MixinProcessorUtils.getProcessor(MixinAgentUtils.getFirstAgent()), config);
 
-                        for (String s : MixinConfigUtils.getGlobalMixinList(config).stream().filter(s->s.startsWith(config.getMixinPackage())).toList()) {
+                        MixinConfigUtils.getGlobalMixinList(config).stream().filter(s -> s.startsWith(config.getMixinPackage())).map((s)-> {
                             try {
-                                for(Class<?> targetClass : getTargetClasses(Class.forName(s))) {
-                                    try {
-                                        byte[] bytes = MixinTransformerUtils.transform(targetClass);
-                                        //Objects.requireNonNull(MixinAgentUtils.getInst()).redefineClasses(new ClassDefinition(targetClass, bytes));
-                                        ModuleUtilsAccess.addAllReadsForFMLGameLayerModules();
-
-                                        //GLFW.glfwHideWindow(Minecraft.getInstance().window.window);
-                                        DeltaTracker.Timer timer0 = Minecraft.getInstance().timer;
-                                        Minecraft.getInstance().noRender = true;
-                                        Minecraft.getInstance().pause = true;
-                                        Minecraft.getInstance().timer = new DeltaTracker.Timer(0,0L, FloatUnaryOperator.identity());
-                                        Minecraft.getInstance().timer.paused = true;
-
-                                        if(InjectorConfig.MIXIN_TRANSFORM_MODE.get().equals(InjectorConfig.MixinTransformMode.TRAMPOLINE)){
-                                            MixinHotSwap.replaceMixedClasses(targetClass,bytes,MixinAgentUtils.getInst(),null);
-                                        }
-                                        else{
-                                            Objects.requireNonNull(MixinAgentUtils.getInst()).redefineClasses(new ClassDefinition(targetClass,bytes));
-                                        }
-
-                                        ModuleUtilsAccess.addAllReadsForFMLGameLayerModules();
-
-                                        //GLFW.glfwShowWindow(Minecraft.getInstance().window.window);
-                                        if(timer0.targetMsptProvider.equals(FloatUnaryOperator.identity())) timer0 = new DeltaTracker.Timer(20.0F, 0L, Minecraft.getInstance()::getTickTargetMillis);
-                                        Minecraft.getInstance().timer = timer0;
-                                        Minecraft.getInstance().noRender = false;
-                                        Minecraft.getInstance().pause = false;
-                                    } catch (Throwable e) {
-                                        NHMJMod.LOGGER.error("Failed to transform and redefine {}.", targetClass, e);
-                                    }
-                                }
-                            } catch (Throwable e) {
-                                NHMJMod.LOGGER.error("Failed to reapply mixin configs.", e);
+                                return MixinUtils.getTargetClasses(Class.forName(s));
+                            } catch (ClassNotFoundException e) {
+                                throw new RuntimeException(e);
                             }
-                        }
+                        }).forEach(targetClasses::addAll);
 
                         Method postInitialiseM = mixinConfigClass.getDeclaredMethod("postInitialise", Extensions.class);
                         postInitialiseM.setAccessible(true);
                         postInitialiseM.invoke(config,(Extensions)MixinTransformerUtils.getTransformer().getExtensions());
                     }
                 }
+            }
+
+            try {
+                for(Class<?> targetClass : targetClasses) {
+                    try {
+                        byte[] bytes = MixinTransformerUtils.transform(targetClass);
+                        //Objects.requireNonNull(MixinAgentUtils.getInst()).redefineClasses(new ClassDefinition(targetClass, bytes));
+                        ModuleUtilsAccess.addAllReadsForFMLGameLayerModules();
+
+                        //GLFW.glfwHideWindow(Minecraft.getInstance().window.window);
+                        DeltaTracker.Timer timer0 = Minecraft.getInstance().timer;
+                        Minecraft.getInstance().noRender = true;
+                        Minecraft.getInstance().pause = true;
+                        Minecraft.getInstance().timer = new DeltaTracker.Timer(0,0L, FloatUnaryOperator.identity());
+                        Minecraft.getInstance().timer.paused = true;
+
+                        if(InjectorConfig.MIXIN_TRANSFORM_MODE.get().equals(InjectorConfig.MixinTransformMode.TRAMPOLINE)){
+                            MixinHotSwap.replaceMixedClasses(targetClass,bytes,MixinAgentUtils.getInst(),null);
+                        }
+                        else{
+                            Objects.requireNonNull(MixinAgentUtils.getInst()).redefineClasses(new ClassDefinition(targetClass,bytes));
+                        }
+
+                        ModuleUtilsAccess.addAllReadsForFMLGameLayerModules();
+
+                        //GLFW.glfwShowWindow(Minecraft.getInstance().window.window);
+                        if(timer0.targetMsptProvider.equals(FloatUnaryOperator.identity())) timer0 = new DeltaTracker.Timer(20.0F, 0L, Minecraft.getInstance()::getTickTargetMillis);
+                        Minecraft.getInstance().timer = timer0;
+                        Minecraft.getInstance().noRender = false;
+                        Minecraft.getInstance().pause = false;
+                    } catch (Throwable e) {
+                        NHMJMod.LOGGER.error("Failed to transform and redefine {}.", targetClass, e);
+                    }
+                }
+            } catch (Throwable e) {
+                NHMJMod.LOGGER.error("Failed to reapply mixin configs.", e);
             }
         } catch (Throwable e) {
             NHMJMod.LOGGER.error("Failed to add or reapply mixins for {}.",path.toFile().getName(),e);
