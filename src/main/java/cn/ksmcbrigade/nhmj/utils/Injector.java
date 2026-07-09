@@ -66,6 +66,7 @@ import java.util.stream.Collectors;
 
 import static cn.ksmcbrigade.mr.utils.UnsafeUtils.getFieldValue;
 import static cn.ksmcbrigade.mr.utils.UnsafeUtils.setFieldValue;
+import static cn.ksmcbrigade.mr.utils.mixin.MixinProcessorUtils.*;
 import static cn.ksmcbrigade.mr.utils.mixin.MixinUtils.getTargetClasses;
 
 @SuppressWarnings({"UnstableApiUsage", "unchecked"})
@@ -136,6 +137,7 @@ public final class Injector {
         }
 
         try {
+
             for (ModFileInfo file : loadingModList.getModFiles()) {
                 for (String mixinConfig : file.getFile().getMixinConfigs()) {
                     Mixins.addConfiguration(mixinConfig);
@@ -143,14 +145,12 @@ public final class Injector {
                     if(config!=null){
                         config.decorate(FabricUtil.KEY_MOD_ID,file.getMods().getFirst().getModId());
 
-                        Config config1 = MixinUtils.toConfig(mixinConfig);
+                        MixinConfigUtils.onSelect(config);
+                        setNotPrepared(config);
+                        MixinConfigUtils.prepare(config,MixinAgentUtils.getFirstAgent());
+                        MixinProcessorUtils.addIntoProcessor(MixinProcessorUtils.getProcessor(MixinAgentUtils.getFirstAgent()), config);
 
-                        IMixinConfig realConfig = config1.getConfig();
-                        MixinConfigUtils.onSelect(realConfig);
-                        MixinConfigUtils.prepare(realConfig,MixinAgentUtils.getFirstAgent());
-                        MixinProcessorUtils.addIntoProcessor(MixinProcessorUtils.getProcessor(MixinAgentUtils.getFirstAgent()),realConfig);
-
-                        for (String s : MixinConfigUtils.getGlobalMixinList(realConfig).stream().filter(s->s.startsWith(realConfig.getMixinPackage())).toList()) {
+                        for (String s : MixinConfigUtils.getGlobalMixinList(config).stream().filter(s->s.startsWith(config.getMixinPackage())).toList()) {
                             try {
                                 for(Class<?> targetClass : getTargetClasses(Class.forName(s))) {
                                     try {
@@ -190,7 +190,7 @@ public final class Injector {
 
                         Method postInitialiseM = mixinConfigClass.getDeclaredMethod("postInitialise", Extensions.class);
                         postInitialiseM.setAccessible(true);
-                        postInitialiseM.invoke(realConfig,(Extensions)MixinTransformerUtils.getTransformer().getExtensions());
+                        postInitialiseM.invoke(config,(Extensions)MixinTransformerUtils.getTransformer().getExtensions());
                     }
                 }
             }
@@ -290,6 +290,12 @@ public final class Injector {
         }
 
         toastComponent.addToast(new SystemToast(SystemToast.SystemToastId.PERIODIC_NOTIFICATION,Component.literal("Inject successfully!"),Component.literal(path.toFile().getName())));
+    }
+
+    private static void setNotPrepared(IMixinConfig config) throws IllegalAccessException, NoSuchFieldException {
+        Field field = config.getClass().getDeclaredField("prepared");
+        field.setAccessible(true);
+        field.set(config,false);
     }
 
     private static void loadConfigs(ModConfig.Type type,Path path){
