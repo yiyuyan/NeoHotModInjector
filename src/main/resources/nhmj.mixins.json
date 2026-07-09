@@ -7,6 +7,7 @@
     "ex.ModConfigSpecMixin"
   ],
   "client": [
+    "MinecraftMixin",
     "ex.ModsScreenMixin"
   ],
   "injectors": {

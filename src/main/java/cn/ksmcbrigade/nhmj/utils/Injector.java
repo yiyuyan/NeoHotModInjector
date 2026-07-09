@@ -15,12 +15,18 @@ import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.components.toasts.SystemToast;
 import net.minecraft.client.gui.components.toasts.ToastComponent;
+import net.minecraft.client.resources.language.I18n;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
+import net.minecraft.server.packs.PackLocationInfo;
 import net.minecraft.server.packs.PackResources;
 import net.minecraft.server.packs.PackType;
+import net.minecraft.server.packs.repository.KnownPack;
 import net.minecraft.server.packs.repository.Pack;
+import net.minecraft.server.packs.repository.PackSource;
+import net.minecraft.server.packs.repository.RepositorySource;
 import net.minecraft.server.packs.resources.*;
+import net.minecraft.world.level.DataPackConfig;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.fml.*;
 import net.neoforged.fml.config.ConfigTracker;
@@ -34,6 +40,10 @@ import net.neoforged.fml.loading.moddiscovery.ModInfo;
 import net.neoforged.fml.loading.moddiscovery.ModValidator;
 import net.neoforged.fml.loading.moddiscovery.readers.JarModsDotTomlModFileReader;
 import net.neoforged.fml.loading.modscan.BackgroundScanHandler;
+import net.neoforged.neoforge.client.event.EntityRenderersEvent;
+import net.neoforged.neoforge.client.event.RegisterClientReloadListenersEvent;
+import net.neoforged.neoforge.client.event.RegisterParticleProvidersEvent;
+import net.neoforged.neoforge.client.event.RenderLevelStageEvent;
 import net.neoforged.neoforge.client.gui.ConfigurationScreen;
 import net.neoforged.neoforge.network.event.RegisterPayloadHandlersEvent;
 import net.neoforged.neoforge.resource.ResourcePackLoader;
@@ -41,6 +51,7 @@ import net.neoforged.neoforgespi.language.IModFileInfo;
 import net.neoforged.neoforgespi.language.IModInfo;
 import net.neoforged.neoforgespi.locating.IModFile;
 import net.neoforged.neoforgespi.locating.ModFileDiscoveryAttributes;
+import org.apache.maven.artifact.versioning.ArtifactVersion;
 import org.jetbrains.annotations.NotNull;
 import org.slf4j.Logger;
 import org.slf4j.Marker;
@@ -51,6 +62,7 @@ import org.spongepowered.asm.mixin.extensibility.IMixinConfig;
 import org.spongepowered.asm.mixin.transformer.Config;
 import org.spongepowered.asm.mixin.transformer.ext.Extensions;
 
+import java.io.IOException;
 import java.lang.instrument.ClassDefinition;
 import java.lang.module.*;
 import java.lang.reflect.Constructor;
@@ -61,11 +73,15 @@ import java.net.URI;
 import java.nio.file.Path;
 import java.rmi.UnexpectedException;
 import java.util.*;
+import java.util.function.Consumer;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 import static cn.ksmcbrigade.mr.utils.UnsafeUtils.getFieldValue;
 import static cn.ksmcbrigade.mr.utils.UnsafeUtils.setFieldValue;
+import static cn.ksmcbrigade.nhmj.NHMJMod.LOGGER;
+import static net.neoforged.neoforge.resource.ResourcePackLoader.*;
 
 @SuppressWarnings({"UnstableApiUsage", "unchecked"})
 public final class Injector {
@@ -111,21 +127,17 @@ public final class Injector {
 
         addToGameLayer(loadingModList);
 
-        for (ModFileInfo file : loadingModList.getModFiles()) {
-            addIntoResManager(file.getFile());
-        }
-
         if(InjectorConfig.MIXIN_TRANSFORM_MODE.get().equals(InjectorConfig.MixinTransformMode.NATIVE)){
             try {
                 if(System.getProperty("java.vendor").contains("JetBrains") && !NHMJMod.jvmHooked){
-                    NHMJMod.LOGGER.info("Trying to enable AllowEnhancedClassRedefinition runtime.");
+                    LOGGER.info("Trying to enable AllowEnhancedClassRedefinition runtime.");
                     NHMJMod.enableAllowEnhancedClassRedefinition();
                 }
                 else if(!NHMJMod.jvmHooked){
                     throw new UnsupportedOperationException("The NATIVE mode is not support the jvm: "+System.getProperty("java.vendor"));
                 }
             } catch (Throwable e) {
-                NHMJMod.LOGGER.error("Failed to enable NATIVE mode.",e);
+                LOGGER.error("Failed to enable NATIVE mode.",e);
                 InjectorConfig.MIXIN_TRANSFORM_MODE.set(InjectorConfig.MixinTransformMode.TRAMPOLINE);
                 if(Minecraft.getInstance().screen instanceof ConfigurationScreen configurationScreen){
                     Minecraft.getInstance().screen = new ConfigurationScreen(configurationScreen.mod,configurationScreen.lastScreen,configurationScreen.sectionScreen);
@@ -194,14 +206,14 @@ public final class Injector {
                         Minecraft.getInstance().noRender = false;
                         Minecraft.getInstance().pause = false;
                     } catch (Throwable e) {
-                        NHMJMod.LOGGER.error("Failed to transform and redefine {}.", targetClass, e);
+                        LOGGER.error("Failed to transform and redefine {}.", targetClass, e);
                     }
                 }
             } catch (Throwable e) {
-                NHMJMod.LOGGER.error("Failed to reapply mixin configs.", e);
+                LOGGER.error("Failed to reapply mixin configs.", e);
             }
         } catch (Throwable e) {
-            NHMJMod.LOGGER.error("Failed to add or reapply mixins for {}.",path.toFile().getName(),e);
+            LOGGER.error("Failed to add or reapply mixins for {}.",path.toFile().getName(),e);
             throw new Throwable("Error in inject mixins.",e);
         }
 
@@ -278,6 +290,10 @@ public final class Injector {
             ModLoadingContext.get().setActiveContainer(null);
         }
 
+        for (ModFileInfo file : loadingModList.getModFiles()) {
+            addIntoResManager(file.getFile());
+        }
+
         if (FMLEnvironment.dist == Dist.CLIENT) {
             loadConfigs(ModConfig.Type.CLIENT, FMLPaths.CONFIGDIR.get());
         }
@@ -293,6 +309,13 @@ public final class Injector {
             modContainer.acceptEvent(new FMLLoadCompleteEvent(modContainer,new DeferredWorkQueue("Complete loading of %d mods".formatted(ModList.get().size()))));
 
             modContainer.acceptEvent(new RegisterPayloadHandlersEvent());
+
+            modContainer.acceptEvent(new RegisterParticleProvidersEvent(Minecraft.getInstance().particleEngine));
+            modContainer.acceptEvent(new RenderLevelStageEvent.RegisterStageEvent());
+
+            modContainer.acceptEvent(new RegisterClientReloadListenersEvent(Minecraft.getInstance().resourceManager));
+            modContainer.acceptEvent(new EntityRenderersEvent.RegisterLayerDefinitions());
+            modContainer.acceptEvent(new EntityRenderersEvent.RegisterRenderers());
         }
 
         toastComponent.addToast(new SystemToast(SystemToast.SystemToastId.PERIODIC_NOTIFICATION,Component.literal("Inject successfully!"),Component.literal(path.toFile().getName())));
@@ -326,59 +349,18 @@ public final class Injector {
                 }
             });
         } catch (Throwable e) {
-            NHMJMod.LOGGER.error("Failed to load configs. {}:{}",e.getClass(),e.getMessage());
+            LOGGER.error("Failed to load configs. {}:{}",e.getClass(),e.getMessage());
         }
     }
 
     private static void addIntoResManager(IModFile modFile) {
         Minecraft mc = Minecraft.getInstance();
-        ResourceManager resourceManager = mc.getResourceManager();
-        Pack.ResourcesSupplier supplier = ResourcePackLoader.createPackForMod(modFile.getModFileInfo());
-        Map<IModFile,Pack.ResourcesSupplier> map = new HashMap<>();
-        map.put(modFile,supplier);
-        ResourcePackLoader.packFinder(map,(pack)->{
-            switch (resourceManager) {
-                case ReloadableResourceManager reloadableResourceManager -> {
-                    if (reloadableResourceManager.resources instanceof MultiPackResourceManager multiPackResourceManager) {
-                        addIntoMultiPackResManager(multiPackResourceManager, pack);
-                    }
-                }
-                case MultiPackResourceManager multiPackResourceManager ->
-                        addIntoMultiPackResManager(multiPackResourceManager, pack);
-                case FallbackResourceManager fallbackResourceManager -> fallbackResourceManager.push(pack.open());
-                default -> throw new RuntimeException("Failed to add pack into the res manager.");
-            }
-        },PackType.CLIENT_RESOURCES);
-    }
 
-    private static void addIntoMultiPackResManager(MultiPackResourceManager multiPackResourceManager, Pack pack) {
-        try(PackResources packResources = pack.open()){
-            multiPackResourceManager.packs = new ArrayList<>(multiPackResourceManager.packs);
-            multiPackResourceManager.packs.add(packResources);
-            Map<String, FallbackResourceManager> map = new HashMap<>(multiPackResourceManager.namespacedManagers);
-            Set<String> set = packResources.getNamespaces(PackType.CLIENT_RESOURCES);
-            ResourceFilterSection resourcefiltersection = multiPackResourceManager.getPackFilterSection(packResources);
-            Predicate<ResourceLocation> predicate = resourcefiltersection != null ? (p_215474_) -> resourcefiltersection.isPathFiltered(p_215474_.getPath()) : null;
-            for (String s : set.stream().distinct().toList()) {
-                boolean flag = set.contains(s);
-                boolean flag1 = resourcefiltersection != null && resourcefiltersection.isNamespaceFiltered(s);
-                if (flag || flag1) {
-                    FallbackResourceManager fallbackresourcemanager = map.computeIfAbsent(s, s1 -> new FallbackResourceManager(PackType.CLIENT_RESOURCES, s1));
+        modResourcePacks.put(modFile,ResourcePackLoader.createPackForMod(modFile.getModFileInfo()));
 
-                    if (flag && flag1) {
-                        fallbackresourcemanager.push(packResources, predicate);
-                    } else if (flag) {
-                        fallbackresourcemanager.push(packResources);
-                    } else {
-                        fallbackresourcemanager.pushFilterOnly(packResources.packId(), predicate);
-                    }
-                }
-            }
-            multiPackResourceManager.namespacedManagers = map;
-        }
-        catch (Throwable throwable){
-            throw new RuntimeException("Failed to add pack into the multipack resource manager.",throwable);
-        }
+        ResourcePackLoader.populatePackRepository(mc.resourcePackRepository, PackType.CLIENT_RESOURCES, false);
+        mc.resourcePackRepository.reload();
+        mc.reloadResourcePacks();
     }
 
     private static void addIntoBTL(ModContainer modContainer) {
@@ -390,14 +372,14 @@ public final class Injector {
             Constructor<?> modConstructor = neoforgeMod.getDeclaredConstructor(ModContainer.class);
             if(MODS==null){
                 MODS = new HashMap<>();
-                NHMJMod.LOGGER.warn("The MODS in ModMenu is null.");
+                LOGGER.warn("The MODS in ModMenu is null.");
             }
 
             MODS.put(modContainer.getModId(),modConstructor.newInstance(modContainer));
         }
         catch (Throwable throwable){
             if(throwable instanceof ClassNotFoundException || throwable instanceof NoClassDefFoundError) return;
-            NHMJMod.LOGGER.warn("Can't add {} into the BetterModList,did you install it? {}:{}",modContainer.getModId(),throwable.getClass(),throwable.getMessage());
+            LOGGER.warn("Can't add {} into the BetterModList,did you install it? {}:{}",modContainer.getModId(),throwable.getClass(),throwable.getMessage());
         }
     }
 
@@ -435,7 +417,7 @@ public final class Injector {
                 newResolvedRoots = new HashMap<>(resolvedRoots);
             }
             else{
-                NHMJMod.LOGGER.warn("The resolvedRoots is null.");
+                LOGGER.warn("The resolvedRoots is null.");
                 for (ModuleReference reference : FMLLoader.getGameLayer().configuration().modules().stream().map(ResolvedModule::reference).toList()) {
                     newResolvedRoots.put(reference.descriptor().name(),reference);
                 }
@@ -446,7 +428,7 @@ public final class Injector {
                 newPackageLookup.putAll(packageLookup);
             }
             else{
-                NHMJMod.LOGGER.warn("The packageLookup is null.");
+                LOGGER.warn("The packageLookup is null.");
                 for (ResolvedModule module : FMLLoader.getGameLayer().configuration().modules()) {
                     for (String aPackage : module.reference().descriptor().packages()) {
                         newPackageLookup.put(aPackage,module);
@@ -500,7 +482,7 @@ public final class Injector {
         try {
             return getFieldValue(targetClass.getDeclaredField(fieldName), target, clazz);
         } catch (Throwable var4) {
-            NHMJMod.LOGGER.error("Failed to get filed value by unsafe.",var4);
+            LOGGER.error("Failed to get filed value by unsafe.",var4);
             return null;
         }
     }
@@ -509,7 +491,7 @@ public final class Injector {
         try {
             setFieldValue(targetClass.getDeclaredField(fieldName), target, value);
         } catch (Throwable var4) {
-            NHMJMod.LOGGER.error("Failed to set filed value by unsafe.",var4);
+            LOGGER.error("Failed to set filed value by unsafe.",var4);
         }
 
     }
