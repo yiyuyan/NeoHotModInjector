@@ -14,6 +14,7 @@ import it.unimi.dsi.fastutil.floats.FloatUnaryOperator;
 import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.components.toasts.SystemToast;
+import net.minecraft.client.gui.components.toasts.ToastComponent;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.packs.PackResources;
@@ -83,6 +84,10 @@ public final class Injector {
     }
 
     public static void inject(Path path) throws Throwable {
+        ToastComponent toastComponent = Minecraft.getInstance().getToasts();
+
+        toastComponent.addToast(new SystemToast(SystemToast.SystemToastId.PERIODIC_NOTIFICATION,Component.literal("Injecting..."),Component.literal(path.toFile().getName())));
+
         JarContents jarContents = JarContents.of(path);
         IModFile modFile = reader.read(jarContents,ModFileDiscoveryAttributes.DEFAULT);
         Map<IModFile.Type, List<ModFile>> modFilesMap;
@@ -283,6 +288,8 @@ public final class Injector {
 
             modContainer.acceptEvent(new RegisterPayloadHandlersEvent());
         }
+
+        toastComponent.addToast(new SystemToast(SystemToast.SystemToastId.PERIODIC_NOTIFICATION,Component.literal("Inject successfully!"),Component.literal(path.toFile().getName())));
     }
 
     private static void loadConfigs(ModConfig.Type type,Path path){
