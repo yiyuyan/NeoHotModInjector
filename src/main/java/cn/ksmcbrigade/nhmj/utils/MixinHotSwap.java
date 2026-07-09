@@ -29,9 +29,6 @@ import java.util.logging.Logger;
  * nest/record/permitted-subclass attributes) byte-for-byte identical to what was already
  * loaded. That keeps the owner's redefine schema-safe while still delivering full
  * schema-changing mixin behavior via the auxiliary class.
- * 
- * Really Thank you very much,Claude!
- * You did a pretty good job!
  */
 public final class MixinHotSwap {
 

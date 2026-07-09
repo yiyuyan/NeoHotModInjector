@@ -13,16 +13,19 @@ import cpw.mods.jarhandling.SecureJar;
 import it.unimi.dsi.fastutil.floats.FloatUnaryOperator;
 import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.components.toasts.SystemToast;
+import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.packs.PackResources;
 import net.minecraft.server.packs.PackType;
 import net.minecraft.server.packs.repository.Pack;
 import net.minecraft.server.packs.resources.*;
+import net.neoforged.api.distmarker.Dist;
 import net.neoforged.fml.*;
-import net.neoforged.fml.event.lifecycle.FMLConstructModEvent;
-import net.neoforged.fml.loading.FMLLoader;
-import net.neoforged.fml.loading.LoadingModList;
-import net.neoforged.fml.loading.UniqueModListBuilder;
+import net.neoforged.fml.config.ConfigTracker;
+import net.neoforged.fml.config.ModConfig;
+import net.neoforged.fml.event.lifecycle.*;
+import net.neoforged.fml.loading.*;
 import net.neoforged.fml.loading.mixin.DeferredMixinConfigRegistration;
 import net.neoforged.fml.loading.moddiscovery.ModFile;
 import net.neoforged.fml.loading.moddiscovery.ModFileInfo;
@@ -30,6 +33,8 @@ import net.neoforged.fml.loading.moddiscovery.ModInfo;
 import net.neoforged.fml.loading.moddiscovery.ModValidator;
 import net.neoforged.fml.loading.moddiscovery.readers.JarModsDotTomlModFileReader;
 import net.neoforged.fml.loading.modscan.BackgroundScanHandler;
+import net.neoforged.neoforge.client.gui.ConfigurationScreen;
+import net.neoforged.neoforge.network.event.RegisterPayloadHandlersEvent;
 import net.neoforged.neoforge.resource.ResourcePackLoader;
 import net.neoforged.neoforgespi.language.IModFileInfo;
 import net.neoforged.neoforgespi.language.IModInfo;
@@ -103,6 +108,24 @@ public final class Injector {
             addIntoResManager(file.getFile());
         }
 
+        if(InjectorConfig.MIXIN_TRANSFORM_MODE.get().equals(InjectorConfig.MixinTransformMode.NATIVE)){
+            try {
+                if(System.getProperty("java.vendor").contains("JetBrains") && !NHMJMod.jvmHooked){
+                    NHMJMod.LOGGER.info("Trying to enable AllowEnhancedClassRedefinition runtime.");
+                    NHMJMod.enableAllowEnhancedClassRedefinition();
+                }
+                else if(!NHMJMod.jvmHooked){
+                    throw new UnsupportedOperationException("The NATIVE mode is not support the jvm: "+System.getProperty("java.vendor"));
+                }
+            } catch (Throwable e) {
+                NHMJMod.LOGGER.error("Failed to enable NATIVE mode.",e);
+                InjectorConfig.MIXIN_TRANSFORM_MODE.set(InjectorConfig.MixinTransformMode.TRAMPOLINE);
+                if(Minecraft.getInstance().screen instanceof ConfigurationScreen configurationScreen){
+                    Minecraft.getInstance().screen = new ConfigurationScreen(configurationScreen.mod,configurationScreen.lastScreen,configurationScreen.sectionScreen);
+                    Minecraft.getInstance().getToasts().addToast(new SystemToast(SystemToast.SystemToastId.WORLD_ACCESS_FAILURE, Component.literal("Can't enable NATIVE mode!"),Component.literal("Please use JetBrainsRuntime 21.0.11+1-b1163.116.")));
+                }
+            }
+        }
 
         try {
             for (ModFileInfo file : loadingModList.getModFiles()) {
@@ -119,8 +142,7 @@ public final class Injector {
                         MixinConfigUtils.prepare(realConfig,MixinAgentUtils.getFirstAgent());
                         MixinProcessorUtils.addIntoProcessor(MixinProcessorUtils.getProcessor(MixinAgentUtils.getFirstAgent()),realConfig);
 
-                        for (String s : MixinConfigUtils.getGlobalMixinList(realConfig)) {
-                            if(!s.startsWith(realConfig.getMixinPackage())) continue;
+                        for (String s : MixinConfigUtils.getGlobalMixinList(realConfig).stream().filter(s->s.startsWith(realConfig.getMixinPackage())).toList()) {
                             try {
                                 for(Class<?> targetClass : getTargetClasses(Class.forName(s))) {
                                     try {
@@ -241,6 +263,28 @@ public final class Injector {
             addIntoBTL(modContainer);
             ModLoadingContext.get().setActiveContainer(null);
         }
+
+        if (FMLEnvironment.dist == Dist.CLIENT) {
+            loadConfigs(ModConfig.Type.CLIENT, FMLPaths.CONFIGDIR.get());
+        }
+        loadConfigs(ModConfig.Type.COMMON, FMLPaths.CONFIGDIR.get());
+
+        for (ModContainer modContainer : containerList) {
+            modContainer.acceptEvent(new FMLCommonSetupEvent(modContainer,new DeferredWorkQueue("Common setup")));
+            modContainer.acceptEvent(new FMLClientSetupEvent(modContainer,new DeferredWorkQueue("Sided setup")));
+
+            modContainer.acceptEvent(new InterModEnqueueEvent(modContainer,new DeferredWorkQueue("Enqueue IMC")));
+            modContainer.acceptEvent(new InterModProcessEvent(modContainer,new DeferredWorkQueue("Process IMC")));
+
+            modContainer.acceptEvent(new FMLLoadCompleteEvent(modContainer,new DeferredWorkQueue("Complete loading of %d mods".formatted(ModList.get().size()))));
+
+            modContainer.acceptEvent(new RegisterPayloadHandlersEvent());
+        }
+    }
+
+    private static void loadConfigs(ModConfig.Type type,Path path){
+        ConfigTracker.LOGGER.debug(ConfigTracker.CONFIG, "Loading configs type {}", type);
+        ConfigTracker.INSTANCE.configSets.get(type).stream().filter(modConfig -> modConfig.loadedConfig == null).forEach(config -> ConfigTracker.openConfig(config, path, null));
     }
 
     private static void addIntoResManager(IModFile modFile) {

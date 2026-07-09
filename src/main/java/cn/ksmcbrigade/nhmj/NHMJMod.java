@@ -31,9 +31,7 @@ import org.slf4j.Logger;
 
 import javax.swing.*;
 import javax.swing.filechooser.FileNameExtensionFilter;
-import java.io.BufferedReader;
-import java.io.File;
-import java.io.InputStreamReader;
+import java.io.*;
 import java.lang.instrument.Instrumentation;
 import java.nio.file.Path;
 import java.rmi.UnexpectedException;
@@ -47,6 +45,7 @@ public class NHMJMod {
     public static final boolean DEBUG = false;
 
     public static boolean configLoaded = false;
+    public static boolean jvmHooked = false;
 
     public NHMJMod(IEventBus eventBus, ModContainer modContainer) throws ClassNotFoundException, UnexpectedException {
         Instrumentation inst = MixinAgentUtils.getInst();
@@ -79,38 +78,43 @@ public class NHMJMod {
             configLoaded = true;
             LOGGER.info("Using mixinTransformMode: {}", InjectorConfig.MIXIN_TRANSFORM_MODE.get());
             if(InjectorConfig.MIXIN_TRANSFORM_MODE.get().equals(InjectorConfig.MixinTransformMode.NATIVE)){
-                try {
-                    FileUtils.writeByteArrayToFile(new File("hook.dll"), IOUtils.toByteArray(Objects.requireNonNull(NHMJMod.class.getResourceAsStream("/JVMFlagHook.dll"))));
-                    System.load(new File("hook.dll").getAbsolutePath());
+                enableAllowEnhancedClassRedefinition();
+            }
+        }
+    }
 
-                    System.out.println(System.getProperty("java.home")+"/bin/jinfo");
+    public static void enableAllowEnhancedClassRedefinition(){
+        try {
+            if(!jvmHooked){
+                FileUtils.writeByteArrayToFile(new File("hook.dll"), IOUtils.toByteArray(Objects.requireNonNull(NHMJMod.class.getResourceAsStream("/JVMFlagHook.dll"))));
+                System.load(new File("hook.dll").getAbsolutePath());
+                jvmHooked = true;
 
-                    Process process = new ProcessBuilder(
-                            new File(System.getProperty("java.home"),"bin/jinfo").getAbsolutePath()
-                            ,"-flag"
-                            ,"+AllowEnhancedClassRedefinition"
-                            ,String.valueOf(ProcessHandle.current().pid())
-                    ).start();
-                    process.waitFor();
+                Process process = new ProcessBuilder(
+                        new File(System.getProperty("java.home"),"bin/jinfo").getAbsolutePath()
+                        ,"-flag"
+                        ,"+AllowEnhancedClassRedefinition"
+                        ,String.valueOf(ProcessHandle.current().pid())
+                ).start();
+                process.waitFor();
 
-                    BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()));
-                    StringBuilder output = new StringBuilder();
-                    String line;
-                    while ((line = reader.readLine()) != null) {
-                        output.append(line).append("\n");
-                    }
+                BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()));
+                StringBuilder output = new StringBuilder();
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    output.append(line).append("\n");
+                }
 
-                    if (process.exitValue()==0){
-                        LOGGER.info("Enable AllowEnhancedClassRedefinition successfully!");
-                        LOGGER.info("Output: \n{}",output);
-                    }
-                    else{
-                        throw new RuntimeException("Failed to enable AllowEnhancedClassRedefinition runtime. output:\n"+output);
-                    }
-                } catch (Throwable e) {
-                    throw new RuntimeException("Failed to enable AllowEnhancedClassRedefinition runtime!",e);
+                if (process.exitValue()==0){
+                    LOGGER.info("Enable AllowEnhancedClassRedefinition successfully!");
+                    LOGGER.info("Output: \n{}",output);
+                }
+                else{
+                    throw new RuntimeException("Failed to enable AllowEnhancedClassRedefinition runtime. output:\n"+output);
                 }
             }
+        } catch (Throwable e) {
+            throw new RuntimeException("Failed to enable AllowEnhancedClassRedefinition runtime!",e);
         }
     }
 
