@@ -39,7 +39,7 @@ public final class MixinHotSwap {
 
     static {
         try {
-            LOGGER.addHandler(new FileHandler("logs/mixinHotSwap-logs.log",true));
+            LOGGER.addHandler(new FileHandler("logs/mixinHotSwap-logs.xml",true));
         } catch (IOException e) {
             LOGGER.info("Failed to add file handler for "+MixinHotSwap.class.getSimpleName());
         }

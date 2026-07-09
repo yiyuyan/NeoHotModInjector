@@ -14,7 +14,6 @@ apply plugin: 'io.github.yiyuyan.sat-plugin'
 superAccessTransformer {
     packageName("net.neoforged.neoforge.resource".replace(".","/"))
     packageName("net.neoforged.neoforge.client.gui".replace(".","/"))
-    packageName("net.neoforged.fml.config".replace(".","/"))
 }
 
 version = mod_version

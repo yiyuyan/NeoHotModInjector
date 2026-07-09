@@ -41,6 +41,9 @@ import net.neoforged.neoforgespi.language.IModInfo;
 import net.neoforged.neoforgespi.locating.IModFile;
 import net.neoforged.neoforgespi.locating.ModFileDiscoveryAttributes;
 import org.jetbrains.annotations.NotNull;
+import org.slf4j.Logger;
+import org.slf4j.Marker;
+import org.slf4j.MarkerFactory;
 import org.spongepowered.asm.mixin.FabricUtil;
 import org.spongepowered.asm.mixin.Mixins;
 import org.spongepowered.asm.mixin.extensibility.IMixinConfig;
@@ -283,8 +286,29 @@ public final class Injector {
     }
 
     private static void loadConfigs(ModConfig.Type type,Path path){
-        ConfigTracker.LOGGER.debug(ConfigTracker.CONFIG, "Loading configs type {}", type);
-        ConfigTracker.INSTANCE.configSets.get(type).stream().filter(modConfig -> modConfig.loadedConfig == null).forEach(config -> ConfigTracker.openConfig(config, path, null));
+        try {
+            Logger LOGGER = UnsafeUtils.getFieldValue(ConfigTracker.class,"LOGGER", Logger.class);
+            Marker CONFIG = UnsafeUtils.getFieldValue(ConfigTracker.class,"CONFIG",Marker.class);
+            EnumMap<ModConfig.Type, Set<ModConfig>> configSets = UnsafeUtils.getFieldValue(ConfigTracker.INSTANCE,"configSets", EnumMap.class);
+
+            Method openConfigM = ConfigTracker.class.getDeclaredMethod("openConfig", ModConfig.class, Path.class, Path.class);
+            openConfigM.setAccessible(true);
+
+            if(LOGGER==null) LOGGER = NHMJMod.LOGGER;
+            if(CONFIG==null) CONFIG = MarkerFactory.getMarker("CONFIG");
+            if(configSets==null) configSets = new EnumMap<>(ModConfig.Type.class);
+
+            LOGGER.debug(CONFIG, "Loading configs type {}", type);
+            configSets.get(type).stream().filter(modConfig -> modConfig.getLoadedConfig() == null).forEach(config -> {
+                try {
+                    openConfigM.invoke(ConfigTracker.INSTANCE,config, path, null);
+                } catch (IllegalAccessException | InvocationTargetException e) {
+                    throw new RuntimeException(e);
+                }
+            });
+        } catch (Throwable e) {
+            NHMJMod.LOGGER.error("Failed to load configs. {}:{}",e.getClass(),e.getMessage());
+        }
     }
 
     private static void addIntoResManager(IModFile modFile) {
