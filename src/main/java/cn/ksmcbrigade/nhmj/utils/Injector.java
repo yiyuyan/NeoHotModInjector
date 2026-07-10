@@ -13,6 +13,7 @@ import cpw.mods.cl.ModuleClassLoader;
 import cpw.mods.jarhandling.JarContents;
 import cpw.mods.jarhandling.SecureJar;
 import it.unimi.dsi.fastutil.floats.FloatUnaryOperator;
+import jdk.internal.module.ServicesCatalog;
 import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.RecipeBookCategories;
@@ -74,6 +75,8 @@ import org.spongepowered.asm.mixin.transformer.Config;
 import org.spongepowered.asm.mixin.transformer.ext.Extensions;
 
 import java.lang.instrument.ClassDefinition;
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.MethodType;
 import java.lang.module.*;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
@@ -590,6 +593,12 @@ public final class Injector {
             setFieldValueWithTargetClass(ModuleClassLoader.class,moduleClassLoader,"resolvedRoots",newResolvedRoots);
             setFieldValueWithTargetClass(ModuleClassLoader.class,moduleClassLoader,"packageLookup",newPackageLookup);
         }
+
+        ModuleLayer gameLayer = FMLLoader.getGameLayer();
+        UnsafeUtils.setFieldValue(gameLayer,"servicesCatalog",null);
+        Method method = ModuleLayer.class.getDeclaredMethod("getServicesCatalog");
+        method.setAccessible(true);
+        method.invoke(gameLayer);
     }
 
     private static @NotNull ModuleClassLoader getModuleClassLoader() throws UnexpectedException {
