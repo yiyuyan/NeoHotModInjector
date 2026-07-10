@@ -4,6 +4,8 @@ import cn.ksmcbrigade.mr.utils.UnsafeUtils;
 import cn.ksmcbrigade.mr.utils.mixin.*;
 import cn.ksmcbrigade.nhmj.NHMJMod;
 import cn.ksmcbrigade.nhmj.config.InjectorConfig;
+import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableMap;
 import com.terraformersmc.mod_menu.ModMenu;
 import com.terraformersmc.mod_menu.util.mod.neoforge.NeoforgeMod;
 import cpw.mods.cl.JarModuleFinder;
@@ -13,10 +15,25 @@ import cpw.mods.jarhandling.SecureJar;
 import it.unimi.dsi.fastutil.floats.FloatUnaryOperator;
 import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.RecipeBookCategories;
 import net.minecraft.client.gui.components.toasts.SystemToast;
 import net.minecraft.client.gui.components.toasts.ToastComponent;
+import net.minecraft.client.gui.screens.MenuScreens;
+import net.minecraft.client.gui.screens.inventory.tooltip.ClientTooltipComponent;
+import net.minecraft.client.gui.screens.worldselection.PresetEditor;
+import net.minecraft.client.renderer.DimensionSpecialEffects;
+import net.minecraft.gametest.framework.GameTestRegistry;
 import net.minecraft.network.chat.Component;
+import net.minecraft.resources.ResourceKey;
+import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.packs.PackType;
+import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.inventory.RecipeBookType;
+import net.minecraft.world.inventory.tooltip.TooltipComponent;
+import net.minecraft.world.item.crafting.RecipeHolder;
+import net.minecraft.world.item.crafting.RecipeType;
+import net.minecraft.world.level.ColorResolver;
+import net.minecraft.world.level.levelgen.presets.WorldPreset;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.fml.*;
 import net.neoforged.fml.config.ConfigTracker;
@@ -30,15 +47,20 @@ import net.neoforged.fml.loading.moddiscovery.ModInfo;
 import net.neoforged.fml.loading.moddiscovery.ModValidator;
 import net.neoforged.fml.loading.moddiscovery.readers.JarModsDotTomlModFileReader;
 import net.neoforged.fml.loading.modscan.BackgroundScanHandler;
-import net.neoforged.neoforge.client.event.EntityRenderersEvent;
-import net.neoforged.neoforge.client.event.RegisterClientReloadListenersEvent;
-import net.neoforged.neoforge.client.event.RegisterParticleProvidersEvent;
-import net.neoforged.neoforge.client.event.RenderLevelStageEvent;
+import net.neoforged.neoforge.client.*;
+import net.neoforged.neoforge.client.event.*;
+import net.neoforged.neoforge.client.event.sound.SoundEngineLoadEvent;
+import net.neoforged.neoforge.client.extensions.common.RegisterClientExtensionsEvent;
+import net.neoforged.neoforge.client.gui.ClientTooltipComponentManager;
 import net.neoforged.neoforge.client.gui.ConfigurationScreen;
+import net.neoforged.neoforge.client.gui.map.RegisterMapDecorationRenderersEvent;
+import net.neoforged.neoforge.event.RegisterGameTestsEvent;
+import net.neoforged.neoforge.gametest.GameTestHooks;
 import net.neoforged.neoforge.network.event.RegisterPayloadHandlersEvent;
 import net.neoforged.neoforge.resource.ResourcePackLoader;
 import net.neoforged.neoforgespi.language.IModFileInfo;
 import net.neoforged.neoforgespi.language.IModInfo;
+import net.neoforged.neoforgespi.language.ModFileScanData;
 import net.neoforged.neoforgespi.locating.IModFile;
 import net.neoforged.neoforgespi.locating.ModFileDiscoveryAttributes;
 import org.jetbrains.annotations.NotNull;
@@ -62,14 +84,20 @@ import java.nio.file.Path;
 import java.rmi.UnexpectedException;
 import java.util.*;
 import java.util.concurrent.*;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 
 import static cn.ksmcbrigade.mr.utils.UnsafeUtils.getFieldValue;
 import static cn.ksmcbrigade.mr.utils.UnsafeUtils.setFieldValue;
 import static cn.ksmcbrigade.nhmj.NHMJMod.LOGGER;
+import static net.neoforged.neoforge.client.DimensionSpecialEffectsManager.preRegisterVanillaEffects;
+import static net.neoforged.neoforge.client.NamedRenderTypeManager.preRegisterVanillaRenderTypes;
+import static net.neoforged.neoforge.client.RecipeBookManager.*;
+import static net.neoforged.neoforge.client.gui.map.MapDecorationRendererManager.RENDERERS;
+import static net.neoforged.neoforge.gametest.GameTestHooks.*;
 import static net.neoforged.neoforge.resource.ResourcePackLoader.*;
 
-@SuppressWarnings({"UnstableApiUsage", "unchecked"})
+@SuppressWarnings({"UnstableApiUsage", "unchecked", "rawtypes"})
 public final class Injector {
 
     private static final Object TRANSFORM_LOCK = new Object();
@@ -309,6 +337,8 @@ public final class Injector {
         Method constructModM = ModContainer.class.getDeclaredMethod("constructMod");
         constructModM.setAccessible(true);
 
+        ModuleUtilsAccess.addAllReadsForFMLGameLayerModules();
+
         DeferredWorkQueue workQueue = new DeferredWorkQueue("Mod Construction");
         for (ModContainer modContainer : containerList){
             ModLoadingContext.get().setActiveContainer(modContainer);
@@ -337,12 +367,88 @@ public final class Injector {
             modContainer.acceptEvent(new RegisterParticleProvidersEvent(Minecraft.getInstance().particleEngine));
             modContainer.acceptEvent(new RenderLevelStageEvent.RegisterStageEvent());
 
+            modContainer.acceptEvent(new RegisterClientExtensionsEvent());
+            registerGametests(modContainer);
+            modContainer.acceptEvent(new RegisterSpriteSourceTypesEvent(ClientHooks.makeSpriteSourceTypesMap()));
+            modContainer.acceptEvent(new RegisterMenuScreensEvent(MenuScreens.SCREENS));
+
             modContainer.acceptEvent(new RegisterClientReloadListenersEvent(Minecraft.getInstance().resourceManager));
             modContainer.acceptEvent(new EntityRenderersEvent.RegisterLayerDefinitions());
             modContainer.acceptEvent(new EntityRenderersEvent.RegisterRenderers());
+
+            HashMap<Class<? extends TooltipComponent>, Function<TooltipComponent, ClientTooltipComponent>> factories = new HashMap<>(ClientTooltipComponentManager.FACTORIES);
+            modContainer.acceptEvent(new RegisterClientTooltipComponentFactoriesEvent(factories));
+            ClientTooltipComponentManager.FACTORIES = ImmutableMap.copyOf(factories);
+
+            HashMap<EntityType<?>, ResourceLocation> shaders = new HashMap<>(EntitySpectatorShaderManager.SHADERS);
+            RegisterEntitySpectatorShadersEvent event = new RegisterEntitySpectatorShadersEvent(shaders);
+            modContainer.acceptEvent(event);
+            EntitySpectatorShaderManager.SHADERS = ImmutableMap.copyOf(shaders);
+
+            modContainer.acceptEvent(new RegisterKeyMappingsEvent(Minecraft.getInstance().options));
+
+            HashMap<RecipeBookCategories, ImmutableList<RecipeBookCategories>> aggregateCategories = new HashMap(ImmutableMap.of(RecipeBookCategories.CRAFTING_SEARCH, ImmutableList.of(RecipeBookCategories.CRAFTING_EQUIPMENT, RecipeBookCategories.CRAFTING_BUILDING_BLOCKS, RecipeBookCategories.CRAFTING_MISC, RecipeBookCategories.CRAFTING_REDSTONE), RecipeBookCategories.FURNACE_SEARCH, ImmutableList.of(RecipeBookCategories.FURNACE_FOOD, RecipeBookCategories.FURNACE_BLOCKS, RecipeBookCategories.FURNACE_MISC), RecipeBookCategories.BLAST_FURNACE_SEARCH, ImmutableList.of(RecipeBookCategories.BLAST_FURNACE_BLOCKS, RecipeBookCategories.BLAST_FURNACE_MISC), RecipeBookCategories.SMOKER_SEARCH, ImmutableList.of(RecipeBookCategories.SMOKER_FOOD)));
+            HashMap<RecipeBookType, ImmutableList<RecipeBookCategories>> typeCategories = new HashMap();
+            HashMap<RecipeType<?>, Function<RecipeHolder<?>, RecipeBookCategories>> recipeCategoryLookups = new HashMap();
+            RegisterRecipeBookCategoriesEvent event2 = new RegisterRecipeBookCategoriesEvent(aggregateCategories, typeCategories, recipeCategoryLookups);
+            modContainer.acceptEvent(event2);
+            AGGREGATE_CATEGORIES.putAll(aggregateCategories);
+            TYPE_CATEGORIES.putAll(typeCategories);
+            RECIPE_CATEGORY_LOOKUPS.putAll(recipeCategoryLookups);
+
+            HashMap<ResourceLocation, DimensionSpecialEffects> effects = new HashMap();
+            DimensionSpecialEffectsManager.DEFAULT_EFFECTS = preRegisterVanillaEffects(effects);
+            HashMap<ResourceLocation, DimensionSpecialEffects> effectsD = new HashMap(effects);
+            effectsD.putAll(DimensionSpecialEffectsManager.EFFECTS);
+            modContainer.acceptEvent(new RegisterDimensionSpecialEffectsEvent(effectsD));
+            DimensionSpecialEffectsManager.EFFECTS = ImmutableMap.copyOf(effectsD);
+
+            HashMap<ResourceLocation, RenderTypeGroup> renderTypes = new HashMap();
+            preRegisterVanillaRenderTypes(renderTypes);
+            HashMap<ResourceLocation, RenderTypeGroup> renderTypesD = new HashMap(renderTypes);
+            renderTypesD.putAll(renderTypes);
+            modContainer.acceptEvent(new RegisterNamedRenderTypesEvent(renderTypesD));
+            NamedRenderTypeManager.RENDER_TYPES = ImmutableMap.copyOf(renderTypesD);
+
+            ImmutableList.Builder<ColorResolver> builder = ImmutableList.builder();
+            builder.addAll(ColorResolverManager.colorResolvers.stream().toList());
+            modContainer.acceptEvent(new RegisterColorHandlersEvent.ColorResolvers(builder));
+            ColorResolverManager.colorResolvers = builder.build();
+
+            Map<ResourceKey<WorldPreset>, PresetEditor> gatheredEditors = new HashMap(PresetEditorManager.editors);
+            PresetEditor.EDITORS.forEach((k, v) -> k.ifPresent((key) -> gatheredEditors.put(key, v)));
+            modContainer.acceptEvent(new RegisterPresetEditorsEvent(gatheredEditors));
+            PresetEditorManager.editors = gatheredEditors;
+
+            ModLoader.postEvent(new RegisterMapDecorationRenderersEvent(RENDERERS));
+
+            modContainer.acceptEvent(new SoundEngineLoadEvent(Minecraft.getInstance().soundManager.soundEngine));
+            modContainer.acceptEvent(new RegisterRenderBuffersEvent(Minecraft.getInstance().renderBuffers.bufferSource.fixedBuffers));
         }
 
+        if(Minecraft.getInstance().gameRenderer!=null) Minecraft.getInstance().gameRenderer.reloadShaders(Minecraft.getInstance().resourceManager);
+        if(Minecraft.getInstance().levelRenderer!=null) Minecraft.getInstance().levelRenderer.allChanged();
+        if(Minecraft.getInstance().blockRenderer!=null) Minecraft.getInstance().blockRenderer.onResourceManagerReload(Minecraft.getInstance().resourceManager);
+        if(Minecraft.getInstance().itemRenderer!=null) Minecraft.getInstance().itemRenderer.onResourceManagerReload(Minecraft.getInstance().resourceManager);
+
         toastComponent.addToast(new SystemToast(SystemToast.SystemToastId.PERIODIC_NOTIFICATION,Component.literal("Inject successfully!"),Component.literal(path.toFile().getName())));
+    }
+
+    public static void registerGametests(ModContainer modContainer) {
+        if (isGametestEnabled()) {
+            Set<String> enabledNamespaces = GameTestHooks.getEnabledNamespaces();
+            LOGGER.info("Enabled Gametest Namespaces: {}", enabledNamespaces);
+            Set<Method> gameTestMethods = new HashSet();
+            RegisterGameTestsEvent event = new RegisterGameTestsEvent(gameTestMethods);
+            modContainer.acceptEvent(event);
+            ModList.get().getAllScanData().stream().map(ModFileScanData::getAnnotations).flatMap(Collection::stream).filter((a) -> GAME_TEST_HOLDER.equals(a.annotationType())).forEach((a) -> addGameTestMethods(a, gameTestMethods));
+
+            for(Method gameTestMethod : gameTestMethods) {
+                GameTestRegistry.register(gameTestMethod, enabledNamespaces);
+            }
+
+        }
+
     }
 
     private static void setNotPrepared(IMixinConfig config) throws IllegalAccessException, NoSuchFieldException {
