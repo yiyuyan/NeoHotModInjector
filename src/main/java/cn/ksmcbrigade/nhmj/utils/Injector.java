@@ -115,6 +115,10 @@ public final class Injector {
 
         addToGameLayer(loadingModList);
 
+        for (ModFileInfo file : loadingModList.getModFiles()) {
+            addIntoResManager(file.getFile());
+        }
+
         if(InjectorConfig.MIXIN_TRANSFORM_MODE.get().equals(InjectorConfig.MixinTransformMode.NATIVE)){
             try {
                 if(System.getProperty("java.vendor").contains("JetBrains") && !NHMJMod.jvmHooked){
@@ -314,10 +318,6 @@ public final class Injector {
             ModLoadingContext.get().setActiveContainer(null);
         }
 
-        for (ModFileInfo file : loadingModList.getModFiles()) {
-            addIntoResManager(file.getFile());
-        }
-
         if (FMLEnvironment.dist == Dist.CLIENT) {
             loadConfigs(ModConfig.Type.CLIENT, FMLPaths.CONFIGDIR.get());
         }
@@ -384,7 +384,6 @@ public final class Injector {
 
         ResourcePackLoader.populatePackRepository(mc.resourcePackRepository, PackType.CLIENT_RESOURCES, false);
         mc.resourcePackRepository.reload();
-        mc.reloadResourcePacks();
     }
 
     private static void addIntoBTL(ModContainer modContainer) {
