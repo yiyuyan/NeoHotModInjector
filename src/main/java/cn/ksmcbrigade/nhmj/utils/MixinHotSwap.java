@@ -14,8 +14,6 @@ import java.lang.invoke.MethodType;
 import java.lang.reflect.Field;
 import java.security.ProtectionDomain;
 import java.util.*;
-import java.util.logging.FileHandler;
-import java.util.logging.Logger;
 
 /**
  * Hot-applies mixin-transformed bytecode to already-loaded classes on stock HotSpot,
@@ -35,16 +33,6 @@ public final class MixinHotSwap {
     private static final Map<Class<?>, Class<?>> EXT_CLASSES = new WeakHashMap<>();
     private static int swapCounter = 0;
 
-    private static final Logger LOGGER = Logger.getLogger(MixinHotSwap.class.getSimpleName());
-
-    static {
-        try {
-            LOGGER.addHandler(new FileHandler("logs/mixinHotSwap-logs.xml",true));
-        } catch (IOException e) {
-            LOGGER.info("Failed to add file handler for "+MixinHotSwap.class.getSimpleName());
-        }
-    }
-
     private MixinHotSwap() {}
 
     /**
@@ -57,10 +45,10 @@ public final class MixinHotSwap {
 
         try {
             inst.redefineClasses(new ClassDefinition(clazz, newBytes));
-            LOGGER.info("[MixinHotSwap] direct redefine ok: "+ clazz.getName());
+            System.out.println("[MixinHotSwap] direct redefine ok: "+ clazz.getName());
             return;
         } catch (UnsupportedOperationException schemaChange) {
-            LOGGER.info("[MixinHotSwap] schema change detected for "+ clazz.getName() +
+            System.out.println("[MixinHotSwap] schema change detected for "+ clazz.getName() +
                     ", building trampoline patch...");
         }
 
@@ -88,7 +76,7 @@ public final class MixinHotSwap {
         }
 
         inst.redefineClasses(new ClassDefinition(clazz, patch.ownerBytes));
-        LOGGER.info("[MixinHotSwap] trampoline redefine ok: " + clazz.getName() + " -> " + extClass.getName());
+        System.out.println("[MixinHotSwap] trampoline redefine ok: " + clazz.getName() + " -> " + extClass.getName());
     }
 
     // =================================================================================
