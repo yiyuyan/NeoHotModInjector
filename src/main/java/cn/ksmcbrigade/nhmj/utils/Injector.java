@@ -61,6 +61,7 @@ import java.net.URI;
 import java.nio.file.Path;
 import java.rmi.UnexpectedException;
 import java.util.*;
+import java.util.concurrent.*;
 import java.util.stream.Collectors;
 
 import static cn.ksmcbrigade.mr.utils.UnsafeUtils.getFieldValue;
@@ -70,6 +71,8 @@ import static net.neoforged.neoforge.resource.ResourcePackLoader.*;
 
 @SuppressWarnings({"UnstableApiUsage", "unchecked"})
 public final class Injector {
+
+    private static final Object TRANSFORM_LOCK = new Object();
 
     public static JarModsDotTomlModFileReader reader = new JarModsDotTomlModFileReader();
 
@@ -133,7 +136,7 @@ public final class Injector {
 
         try {
 
-            Set<Class<?>> targetClasses = new HashSet<>();
+            Set<Class<?>> targetClasses = Collections.synchronizedSet(new HashSet<>());
             
             for (ModFileInfo file : loadingModList.getModFiles()) {
                 for (String mixinConfig : file.getFile().getMixinConfigs()) {
@@ -147,13 +150,14 @@ public final class Injector {
                         MixinConfigUtils.prepare(config,MixinAgentUtils.getFirstAgent());
                         MixinProcessorUtils.addIntoProcessor(MixinProcessorUtils.getProcessor(MixinAgentUtils.getFirstAgent()), config);
 
-                        MixinConfigUtils.getGlobalMixinList(config).stream().filter(s -> s.startsWith(config.getMixinPackage())).map((s)-> {
+                        List<String> unhandledTargets = new ArrayList<>(MixinConfigUtils.getUnhandledTargets(config));
+                        targetClasses.addAll(unhandledTargets.stream().map((s)->{
                             try {
-                                return MixinUtils.getTargetClasses(Class.forName(s));
+                                return Class.forName(s);
                             } catch (ClassNotFoundException e) {
                                 throw new RuntimeException(e);
                             }
-                        }).forEach(targetClasses::addAll);
+                        }).toList());
 
                         Method postInitialiseM = mixinConfigClass.getDeclaredMethod("postInitialise", Extensions.class);
                         postInitialiseM.setAccessible(true);
@@ -163,37 +167,72 @@ public final class Injector {
             }
 
             try {
-                for(Class<?> targetClass : targetClasses) {
+                int poolSize = Math.max(1, InjectorConfig.MIXIN_TRANSFORM_POOLS.get());
+                ExecutorService executor = Executors.newFixedThreadPool(poolSize);
+                ConcurrentLinkedQueue<Map.Entry<Class<?>, byte[]>> transformResults = new ConcurrentLinkedQueue<>();
+                List<Future<?>> futures = new ArrayList<>();
+
+                for (Class<?> targetClass : targetClasses) {
+                    futures.add(executor.submit(() -> {
+                        synchronized (TRANSFORM_LOCK) {
+                            try {
+                                byte[] bytes = MixinTransformerUtils.transform(targetClass);
+                                transformResults.add(new AbstractMap.SimpleEntry<>(targetClass, bytes));
+                            } catch (Throwable e) {
+                                LOGGER.error("Failed to transform {}.", targetClass, e);
+                            }
+                        }
+                    }));
+                }
+
+                for (Future<?> future : futures) {
                     try {
-                        byte[] bytes = MixinTransformerUtils.transform(targetClass);
-                        //Objects.requireNonNull(MixinAgentUtils.getInst()).redefineClasses(new ClassDefinition(targetClass, bytes));
-                        ModuleUtilsAccess.addAllReadsForFMLGameLayerModules();
-
-                        //GLFW.glfwHideWindow(Minecraft.getInstance().window.window);
-                        DeltaTracker.Timer timer0 = Minecraft.getInstance().timer;
-                        Minecraft.getInstance().noRender = true;
-                        Minecraft.getInstance().pause = true;
-                        Minecraft.getInstance().timer = new DeltaTracker.Timer(0,0L, FloatUnaryOperator.identity());
-                        Minecraft.getInstance().timer.paused = true;
-
-                        if(InjectorConfig.MIXIN_TRANSFORM_MODE.get().equals(InjectorConfig.MixinTransformMode.TRAMPOLINE)){
-                            MixinHotSwap.replaceMixedClasses(targetClass,bytes,MixinAgentUtils.getInst(),null);
-                        }
-                        else{
-                            Objects.requireNonNull(MixinAgentUtils.getInst()).redefineClasses(new ClassDefinition(targetClass,bytes));
-                        }
-
-                        ModuleUtilsAccess.addAllReadsForFMLGameLayerModules();
-
-                        //GLFW.glfwShowWindow(Minecraft.getInstance().window.window);
-                        if(timer0.targetMsptProvider.equals(FloatUnaryOperator.identity())) timer0 = new DeltaTracker.Timer(20.0F, 0L, Minecraft.getInstance()::getTickTargetMillis);
-                        Minecraft.getInstance().timer = timer0;
-                        Minecraft.getInstance().noRender = false;
-                        Minecraft.getInstance().pause = false;
-                    } catch (Throwable e) {
-                        LOGGER.error("Failed to transform and redefine {}.", targetClass, e);
+                        future.get();
+                    } catch (InterruptedException | ExecutionException e) {
+                        LOGGER.error("Transform task failed.", e);
                     }
                 }
+                executor.shutdown();
+
+                ModuleUtilsAccess.addAllReadsForFMLGameLayerModules();
+
+                DeltaTracker.Timer timer0 = Minecraft.getInstance().timer;
+                Minecraft.getInstance().noRender = true;
+                Minecraft.getInstance().pause = true;
+                Minecraft.getInstance().timer = new DeltaTracker.Timer(0, 0L, FloatUnaryOperator.identity());
+                Minecraft.getInstance().timer.paused = true;
+
+                try {
+                    List<ClassDefinition> batchedDefs = new ArrayList<>();
+                    boolean trampoline = InjectorConfig.MIXIN_TRANSFORM_MODE.get().equals(InjectorConfig.MixinTransformMode.TRAMPOLINE);
+
+                    for (Map.Entry<Class<?>, byte[]> entry : transformResults) {
+                        Class<?> targetClass = entry.getKey();
+                        byte[] bytes = entry.getValue();
+                        try {
+                            if (trampoline) {
+                                ClassDefinition def = MixinHotSwap.replaceMixedClasses(targetClass, bytes, MixinAgentUtils.getInst(), null);
+                                if (def != null) batchedDefs.add(def);
+                            } else {
+                                batchedDefs.add(new ClassDefinition(targetClass, bytes));
+                            }
+                        } catch (Throwable e) {
+                            LOGGER.error("Failed to redefine {}.", targetClass, e);
+                        }
+                    }
+
+                    if (!batchedDefs.isEmpty()) {
+                        Objects.requireNonNull(MixinAgentUtils.getInst()).redefineClasses(batchedDefs.toArray(new ClassDefinition[0]));
+                    }
+                } finally {
+                    if (timer0.targetMsptProvider.equals(FloatUnaryOperator.identity()))
+                        timer0 = new DeltaTracker.Timer(20.0F, 0L, Minecraft.getInstance()::getTickTargetMillis);
+                    Minecraft.getInstance().timer = timer0;
+                    Minecraft.getInstance().noRender = false;
+                    Minecraft.getInstance().pause = false;
+                }
+
+                ModuleUtilsAccess.addAllReadsForFMLGameLayerModules();
             } catch (Throwable e) {
                 LOGGER.error("Failed to reapply mixin configs.", e);
             }

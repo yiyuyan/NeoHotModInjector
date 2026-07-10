@@ -38,15 +38,17 @@ public final class MixinHotSwap {
     /**
      * @param mixinAgent unused hook slot for triggering your MixinAgent's own bookkeeping
      *                   after a successful swap; safe to pass null.
+     * @return null if the class was directly redefined (no schema change),
+     *         or a ClassDefinition for the trampoline-rewritten owner to be batched by the caller.
      */
-    public static void replaceMixedClasses(Class<?> clazz, byte[] newBytes,
-                                           Instrumentation inst, Object mixinAgent) throws Exception {
+    public static ClassDefinition replaceMixedClasses(Class<?> clazz, byte[] newBytes,
+                                            Instrumentation inst, Object mixinAgent) throws Exception {
         byte[] originalBytes = captureCurrentBytecode(clazz, inst);
 
         try {
             inst.redefineClasses(new ClassDefinition(clazz, newBytes));
             System.out.println("[MixinHotSwap] direct redefine ok: "+ clazz.getName());
-            return;
+            return null;
         } catch (UnsupportedOperationException schemaChange) {
             System.out.println("[MixinHotSwap] schema change detected for "+ clazz.getName() +
                     ", building trampoline patch...");
@@ -57,26 +59,19 @@ public final class MixinHotSwap {
 
         MethodHandles.Lookup lookup = MethodHandles.privateLookupIn(clazz, MethodHandles.lookup());
 
-        // Real, named, classloader-visible class — NOT defineHiddenClass. Hidden classes get an
-        // internal synthetic name invisible to ordinary symbolic INVOKESTATIC/GETSTATIC resolution,
-        // which is exactly what the redefined owner bytecode needs to call into this class by name.
         Class<?> extClass = lookup.defineClass(patch.extClassBytes);
         EXT_CLASSES.put(clazz, extClass);
 
-        // Wire up any super-call MethodHandles. This must happen via a Lookup whose lookupClass is
-        // genuinely `clazz` (owner), since only the real subclass has authority to findSpecial a
-        // superclass method — the ext class itself is not a legitimate caller for that resolution.
         for (SuperCallSite sc : patch.superCalls) {
             Class<?> targetOwner = Class.forName(sc.targetOwner.replace('/', '.'), false, clazz.getClassLoader());
             MethodType mt = MethodType.fromMethodDescriptorString(sc.desc, clazz.getClassLoader());
             MethodHandle handle = lookup.findSpecial(targetOwner, sc.name, mt, clazz);
             Field f = extClass.getDeclaredField("HANDLE$" + sc.wrapperName);
-            f.setAccessible(true); // if this throws InaccessibleObjectException, open the target
-            f.set(null, handle);   // module/package to your agent's module first (see ModuleUtilsAccess)
+            f.setAccessible(true);
+            f.set(null, handle);
         }
 
-        inst.redefineClasses(new ClassDefinition(clazz, patch.ownerBytes));
-        System.out.println("[MixinHotSwap] trampoline redefine ok: " + clazz.getName() + " -> " + extClass.getName());
+        return new ClassDefinition(clazz, patch.ownerBytes);
     }
 
     // =================================================================================
