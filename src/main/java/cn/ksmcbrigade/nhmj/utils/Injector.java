@@ -426,10 +426,7 @@ public final class Injector {
             modContainer.acceptEvent(new RegisterRenderBuffersEvent(Minecraft.getInstance().renderBuffers.bufferSource.fixedBuffers));
         }
 
-        if(Minecraft.getInstance().gameRenderer!=null) Minecraft.getInstance().gameRenderer.reloadShaders(Minecraft.getInstance().resourceManager);
-        if(Minecraft.getInstance().levelRenderer!=null) Minecraft.getInstance().levelRenderer.allChanged();
-        if(Minecraft.getInstance().blockRenderer!=null) Minecraft.getInstance().blockRenderer.onResourceManagerReload(Minecraft.getInstance().resourceManager);
-        if(Minecraft.getInstance().itemRenderer!=null) Minecraft.getInstance().itemRenderer.onResourceManagerReload(Minecraft.getInstance().resourceManager);
+        NHMJMod.injectorReload = true;
 
         toastComponent.addToast(new SystemToast(SystemToast.SystemToastId.PERIODIC_NOTIFICATION,Component.literal("Inject successfully!"),Component.literal(path.toFile().getName())));
     }

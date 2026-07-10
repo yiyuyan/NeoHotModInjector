@@ -21,7 +21,10 @@ import net.neoforged.fml.common.Mod;
 import net.neoforged.fml.config.ModConfig;
 import net.neoforged.fml.event.config.ModConfigEvent;
 import net.neoforged.fml.loading.FMLLoader;
+import net.neoforged.neoforge.client.event.ClientTickEvent;
 import net.neoforged.neoforge.client.event.RegisterClientCommandsEvent;
+import net.neoforged.neoforge.client.event.RenderFrameEvent;
+import net.neoforged.neoforge.client.event.RenderGuiLayerEvent;
 import net.neoforged.neoforge.client.gui.ConfigurationScreen;
 import net.neoforged.neoforge.client.gui.IConfigScreenFactory;
 import net.neoforged.neoforge.common.NeoForge;
@@ -47,6 +50,8 @@ public class NHMJMod {
 
     public static boolean configLoaded = false;
     public static boolean jvmHooked = false;
+
+    public static boolean injectorReload = false;
 
     public NHMJMod(IEventBus eventBus, ModContainer modContainer) throws ClassNotFoundException, UnexpectedException {
         Instrumentation inst = MixinAgentUtils.getInst();
@@ -81,6 +86,17 @@ public class NHMJMod {
         }).start();
 
         NeoForge.EVENT_BUS.register(this);
+    }
+
+    @SubscribeEvent
+    public void renderThreadEvent(RenderFrameEvent.Pre event){
+        if(injectorReload){
+            injectorReload = false;
+            if(Minecraft.getInstance().gameRenderer!=null) Minecraft.getInstance().gameRenderer.reloadShaders(Minecraft.getInstance().resourceManager);
+            if(Minecraft.getInstance().levelRenderer!=null) Minecraft.getInstance().levelRenderer.allChanged();
+            if(Minecraft.getInstance().blockRenderer!=null) Minecraft.getInstance().blockRenderer.onResourceManagerReload(Minecraft.getInstance().resourceManager);
+            if(Minecraft.getInstance().itemRenderer!=null) Minecraft.getInstance().itemRenderer.onResourceManagerReload(Minecraft.getInstance().resourceManager);
+        }
     }
 
     private void configLoadEvent(ModConfigEvent.Loading event) {
