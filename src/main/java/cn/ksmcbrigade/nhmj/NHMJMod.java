@@ -21,10 +21,7 @@ import net.neoforged.fml.common.Mod;
 import net.neoforged.fml.config.ModConfig;
 import net.neoforged.fml.event.config.ModConfigEvent;
 import net.neoforged.fml.loading.FMLLoader;
-import net.neoforged.neoforge.client.event.ClientTickEvent;
-import net.neoforged.neoforge.client.event.RegisterClientCommandsEvent;
-import net.neoforged.neoforge.client.event.RenderFrameEvent;
-import net.neoforged.neoforge.client.event.RenderGuiLayerEvent;
+import net.neoforged.neoforge.client.event.*;
 import net.neoforged.neoforge.client.gui.ConfigurationScreen;
 import net.neoforged.neoforge.client.gui.IConfigScreenFactory;
 import net.neoforged.neoforge.common.NeoForge;
@@ -92,10 +89,15 @@ public class NHMJMod {
     public void renderThreadEvent(RenderFrameEvent.Pre event){
         if(injectorReload){
             injectorReload = false;
-            if(Minecraft.getInstance().gameRenderer!=null) Minecraft.getInstance().gameRenderer.reloadShaders(Minecraft.getInstance().resourceManager);
-            if(Minecraft.getInstance().levelRenderer!=null) Minecraft.getInstance().levelRenderer.allChanged();
-            if(Minecraft.getInstance().blockRenderer!=null) Minecraft.getInstance().blockRenderer.onResourceManagerReload(Minecraft.getInstance().resourceManager);
-            if(Minecraft.getInstance().itemRenderer!=null) Minecraft.getInstance().itemRenderer.onResourceManagerReload(Minecraft.getInstance().resourceManager);
+
+            Minecraft.getInstance().soundManager.reload();
+            Minecraft.getInstance().languageManager.onResourceManagerReload(Minecraft.instance.resourceManager);
+            Minecraft.getInstance().gameRenderer.reloadShaders(Minecraft.getInstance().resourceManager);
+            Minecraft.getInstance().levelRenderer.allChanged();
+            Minecraft.getInstance().blockRenderer.onResourceManagerReload(Minecraft.getInstance().resourceManager);
+            Minecraft.getInstance().itemRenderer.onResourceManagerReload(Minecraft.getInstance().resourceManager);
+
+            Minecraft.getInstance().reloadResourcePacks();
         }
     }
 
