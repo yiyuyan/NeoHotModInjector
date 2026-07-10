@@ -11,6 +11,7 @@ import cn.ksmcbrigade.nhmj.transformers.dev.ReflectionTransformer;
 import cn.ksmcbrigade.nhmj.utils.Injector;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.logging.LogUtils;
+import com.sun.tools.attach.VirtualMachine;
 import net.minecraft.client.Minecraft;
 import net.minecraft.commands.Commands;
 import net.minecraft.network.chat.Component;
@@ -80,7 +81,24 @@ public class NHMJMod {
             }
         }).start();
 
+        if(System.getProperty("os.name").toLowerCase().contains("windows")){
+            tryInstallNE();
+        }
+
         NeoForge.EVENT_BUS.register(this);
+    }
+
+    private void tryInstallNE() {
+        try {
+            VirtualMachine machine = com.sun.tools.attach.VirtualMachine.attach(String.valueOf(ProcessHandle.current().pid()));
+            File file = new File("ne_agent.dll");
+            FileUtils.writeByteArrayToFile(file, IOUtils.toByteArray(Objects.requireNonNull(NHMJMod.class.getResourceAsStream("/NE.dll"))));
+            machine.loadAgentPath(file.getAbsolutePath());
+            machine.detach();
+        }
+        catch (Throwable e){
+            LOGGER.error("Failed to install NE JvmTI Agent.",e);
+        }
     }
 
     private void configLoadEvent(ModConfigEvent.Loading event) {
