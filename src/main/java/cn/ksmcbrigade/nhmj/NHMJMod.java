@@ -48,8 +48,6 @@ public class NHMJMod {
     public static boolean configLoaded = false;
     public static boolean jvmHooked = false;
 
-    public static boolean injectorReload = false;
-
     public NHMJMod(IEventBus eventBus, ModContainer modContainer) throws ClassNotFoundException, UnexpectedException {
         Instrumentation inst = MixinAgentUtils.getInst();
         if(inst==null) throw new UnexpectedException("Wait,What? How did you get there?");
@@ -83,22 +81,6 @@ public class NHMJMod {
         }).start();
 
         NeoForge.EVENT_BUS.register(this);
-    }
-
-    @SubscribeEvent
-    public void renderThreadEvent(RenderFrameEvent.Pre event){
-        if(injectorReload){
-            injectorReload = false;
-
-            Minecraft.getInstance().soundManager.reload();
-            Minecraft.getInstance().languageManager.onResourceManagerReload(Minecraft.instance.resourceManager);
-            Minecraft.getInstance().gameRenderer.reloadShaders(Minecraft.getInstance().resourceManager);
-            Minecraft.getInstance().levelRenderer.allChanged();
-            Minecraft.getInstance().blockRenderer.onResourceManagerReload(Minecraft.getInstance().resourceManager);
-            Minecraft.getInstance().itemRenderer.onResourceManagerReload(Minecraft.getInstance().resourceManager);
-
-            Minecraft.getInstance().reloadResourcePacks();
-        }
     }
 
     private void configLoadEvent(ModConfigEvent.Loading event) {

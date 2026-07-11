@@ -391,7 +391,7 @@ public final class Injector {
             HashMap<EntityType<?>, ResourceLocation> shaders = new HashMap<>(UnsafeUtils.getFieldValue(EntitySpectatorShaderManager.class,"SHADERS",Map.class));
             RegisterEntitySpectatorShadersEvent event = new RegisterEntitySpectatorShadersEvent(shaders);
             modContainer.acceptEvent(event);
-            UnsafeUtils.setFieldValue(EntitySpectatorShaderManager.class,"SHADERS",ImmutableMap.copyOf(shaders));
+            setFieldValueWithTargetClass(EntitySpectatorShaderManager.class,null,"SHADERS",ImmutableMap.copyOf(shaders));
 
             modContainer.acceptEvent(new RegisterKeyMappingsEvent(Minecraft.getInstance().options));
 
@@ -408,11 +408,11 @@ public final class Injector {
                 MethodHandle preRegisterVanillaEffectsMH = lookup.findStatic(DimensionSpecialEffectsManager.class, "preRegisterVanillaEffects", MethodType.methodType(DimensionSpecialEffects.class, Map.class));
                 HashMap<ResourceLocation, DimensionSpecialEffects> effects = new HashMap();
                 DimensionSpecialEffects defaultEffects = (DimensionSpecialEffects) preRegisterVanillaEffectsMH.invoke(effects);
-                UnsafeUtils.setFieldValue(DimensionSpecialEffectsManager.class, "DEFAULT_EFFECTS", defaultEffects);
+                setFieldValueWithTargetClass(DimensionSpecialEffectsManager.class,null, "DEFAULT_EFFECTS", defaultEffects);
                 HashMap<ResourceLocation, DimensionSpecialEffects> effectsD = new HashMap(effects);
                 effectsD.putAll((Map) UnsafeUtils.getFieldValue(DimensionSpecialEffectsManager.class, "EFFECTS", Map.class));
                 modContainer.acceptEvent(new RegisterDimensionSpecialEffectsEvent(effectsD));
-                UnsafeUtils.setFieldValue(DimensionSpecialEffectsManager.class, "EFFECTS", ImmutableMap.copyOf(effectsD));
+                setFieldValueWithTargetClass(DimensionSpecialEffectsManager.class,null, "EFFECTS", ImmutableMap.copyOf(effectsD));
             } catch (Throwable e) {
                 LOGGER.error("Failed to register dimension special effects.", e);
             }
@@ -424,7 +424,7 @@ public final class Injector {
                 HashMap<ResourceLocation, RenderTypeGroup> renderTypesD = new HashMap(renderTypes);
                 renderTypesD.putAll((Map) UnsafeUtils.getFieldValue(NamedRenderTypeManager.class, "RENDER_TYPES", Map.class));
                 modContainer.acceptEvent(new RegisterNamedRenderTypesEvent(renderTypesD));
-                UnsafeUtils.setFieldValue(NamedRenderTypeManager.class, "RENDER_TYPES", ImmutableMap.copyOf(renderTypesD));
+                setFieldValueWithTargetClass(NamedRenderTypeManager.class,null, "RENDER_TYPES", ImmutableMap.copyOf(renderTypesD));
             } catch (Throwable e) {
                 LOGGER.error("Failed to register named render types.", e);
             }
@@ -434,7 +434,7 @@ public final class Injector {
                 List<ColorResolver> resolvers = UnsafeUtils.getFieldValue(ColorResolverManager.class, "colorResolvers", List.class);
                 builder.addAll(resolvers.stream().toList());
                 modContainer.acceptEvent(new RegisterColorHandlersEvent.ColorResolvers(builder));
-                UnsafeUtils.setFieldValue(ColorResolverManager.class, "colorResolvers", builder.build());
+                setFieldValueWithTargetClass(ColorResolverManager.class,null, "colorResolvers", builder.build());
             } catch (Throwable e) {
                 LOGGER.error("Failed to register color resolvers.", e);
             }
@@ -444,7 +444,7 @@ public final class Injector {
                 Map<ResourceKey<WorldPreset>, PresetEditor> gatheredEditors = new HashMap(editorsMap);
                 PresetEditor.EDITORS.forEach((k, v) -> k.ifPresent((key) -> gatheredEditors.put(key, v)));
                 modContainer.acceptEvent(new RegisterPresetEditorsEvent(gatheredEditors));
-                UnsafeUtils.setFieldValue(PresetEditorManager.class, "editors", gatheredEditors);
+                setFieldValueWithTargetClass(PresetEditorManager.class,null, "editors", gatheredEditors);
             } catch (Throwable e) {
                 LOGGER.error("Failed to register preset editors.", e);
             }
@@ -455,7 +455,7 @@ public final class Injector {
             modContainer.acceptEvent(new RegisterRenderBuffersEvent(Minecraft.getInstance().renderBuffers.bufferSource.fixedBuffers));
         }
 
-        NHMJMod.injectorReload = true;
+        Minecraft.getInstance().reloadResourcePacks();
 
         toastComponent.addToast(new SystemToast(SystemToast.SystemToastId.PERIODIC_NOTIFICATION,Component.literal("Inject successfully!"),Component.literal(path.toFile().getName())));
     }
