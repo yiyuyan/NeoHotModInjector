@@ -35,9 +35,11 @@ import net.minecraft.world.item.crafting.RecipeType;
 import net.minecraft.world.level.ColorResolver;
 import net.minecraft.world.level.levelgen.presets.WorldPreset;
 import net.neoforged.api.distmarker.Dist;
+import net.neoforged.bus.api.Event;
 import net.neoforged.fml.*;
 import net.neoforged.fml.config.ConfigTracker;
 import net.neoforged.fml.config.ModConfig;
+import net.neoforged.fml.event.IModBusEvent;
 import net.neoforged.fml.event.lifecycle.*;
 import net.neoforged.fml.loading.*;
 import net.neoforged.fml.loading.mixin.DeferredMixinConfigRegistration;
@@ -50,9 +52,9 @@ import net.neoforged.fml.loading.modscan.BackgroundScanHandler;
 import net.neoforged.neoforge.client.*;
 import net.neoforged.neoforge.client.event.*;
 import net.neoforged.neoforge.client.event.sound.SoundEngineLoadEvent;
-import net.neoforged.neoforge.client.extensions.common.RegisterClientExtensionsEvent;
 import net.neoforged.neoforge.client.gui.ClientTooltipComponentManager;
 import net.neoforged.neoforge.client.gui.ConfigurationScreen;
+import net.neoforged.neoforge.client.gui.map.MapDecorationRendererManager;
 import net.neoforged.neoforge.client.gui.map.RegisterMapDecorationRenderersEvent;
 import net.neoforged.neoforge.event.RegisterGameTestsEvent;
 import net.neoforged.neoforge.gametest.GameTestHooks;
@@ -74,6 +76,9 @@ import org.spongepowered.asm.mixin.transformer.Config;
 import org.spongepowered.asm.mixin.transformer.ext.Extensions;
 
 import java.lang.instrument.ClassDefinition;
+import java.lang.invoke.MethodHandle;
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.MethodType;
 import java.lang.module.*;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
@@ -90,12 +95,7 @@ import java.util.stream.Collectors;
 import static cn.ksmcbrigade.mr.utils.UnsafeUtils.getFieldValue;
 import static cn.ksmcbrigade.mr.utils.UnsafeUtils.setFieldValue;
 import static cn.ksmcbrigade.nhmj.NHMJMod.LOGGER;
-import static net.neoforged.neoforge.client.DimensionSpecialEffectsManager.preRegisterVanillaEffects;
-import static net.neoforged.neoforge.client.NamedRenderTypeManager.preRegisterVanillaRenderTypes;
-import static net.neoforged.neoforge.client.RecipeBookManager.*;
-import static net.neoforged.neoforge.client.gui.map.MapDecorationRendererManager.RENDERERS;
-import static net.neoforged.neoforge.gametest.GameTestHooks.*;
-import static net.neoforged.neoforge.resource.ResourcePackLoader.*;
+import static net.neoforged.neoforge.resource.ResourcePackLoader.modResourcePacks;
 
 @SuppressWarnings({"UnstableApiUsage", "unchecked", "rawtypes"})
 public final class Injector {
@@ -106,15 +106,18 @@ public final class Injector {
 
     public static final Class<?> mixinConfigClass;
 
+    public static final MethodHandles.Lookup lookup;
+
     static {
         try {
             mixinConfigClass = Class.forName("org.spongepowered.asm.mixin.transformer.MixinConfig");
+            lookup = getFieldValue(MethodHandles.Lookup.class, "IMPL_LOOKUP", MethodHandles.Lookup.class);
         } catch (ClassNotFoundException e) {
             throw new RuntimeException("Failed to get mixin config class.",e);
         }
     }
 
-    public static void inject(Path path) throws Throwable {
+    public static <T extends Event & IModBusEvent> void inject(Path path) throws Throwable {
         ToastComponent toastComponent = Minecraft.getInstance().getToasts();
 
         toastComponent.addToast(new SystemToast(SystemToast.SystemToastId.PERIODIC_NOTIFICATION,Component.literal("Injecting..."),Component.literal(path.toFile().getName())));
@@ -367,7 +370,12 @@ public final class Injector {
             modContainer.acceptEvent(new RegisterParticleProvidersEvent(Minecraft.getInstance().particleEngine));
             modContainer.acceptEvent(new RenderLevelStageEvent.RegisterStageEvent());
 
-            modContainer.acceptEvent(new RegisterClientExtensionsEvent());
+            Class<?> clientExEvent = Class.forName("net.neoforged.neoforge.client.extensions.common.RegisterClientExtensionsEvent");
+            Constructor<?> constructor = clientExEvent.getDeclaredConstructor();
+            constructor.setAccessible(true);
+            T eventT = (T) constructor.newInstance();
+            modContainer.acceptEvent(eventT);
+
             registerGametests(modContainer);
             modContainer.acceptEvent(new RegisterSpriteSourceTypesEvent(ClientHooks.makeSpriteSourceTypesMap()));
             modContainer.acceptEvent(new RegisterMenuScreensEvent(MenuScreens.SCREENS));
@@ -380,10 +388,10 @@ public final class Injector {
             modContainer.acceptEvent(new RegisterClientTooltipComponentFactoriesEvent(factories));
             ClientTooltipComponentManager.FACTORIES = ImmutableMap.copyOf(factories);
 
-            HashMap<EntityType<?>, ResourceLocation> shaders = new HashMap<>(EntitySpectatorShaderManager.SHADERS);
+            HashMap<EntityType<?>, ResourceLocation> shaders = new HashMap<>(UnsafeUtils.getFieldValue(EntitySpectatorShaderManager.class,"SHADERS",Map.class));
             RegisterEntitySpectatorShadersEvent event = new RegisterEntitySpectatorShadersEvent(shaders);
             modContainer.acceptEvent(event);
-            EntitySpectatorShaderManager.SHADERS = ImmutableMap.copyOf(shaders);
+            UnsafeUtils.setFieldValue(EntitySpectatorShaderManager.class,"SHADERS",ImmutableMap.copyOf(shaders));
 
             modContainer.acceptEvent(new RegisterKeyMappingsEvent(Minecraft.getInstance().options));
 
@@ -392,35 +400,56 @@ public final class Injector {
             HashMap<RecipeType<?>, Function<RecipeHolder<?>, RecipeBookCategories>> recipeCategoryLookups = new HashMap();
             RegisterRecipeBookCategoriesEvent event2 = new RegisterRecipeBookCategoriesEvent(aggregateCategories, typeCategories, recipeCategoryLookups);
             modContainer.acceptEvent(event2);
-            AGGREGATE_CATEGORIES.putAll(aggregateCategories);
-            TYPE_CATEGORIES.putAll(typeCategories);
-            RECIPE_CATEGORY_LOOKUPS.putAll(recipeCategoryLookups);
+            UnsafeUtils.getFieldValue(RecipeBookManager.class, "AGGREGATE_CATEGORIES", Map.class).putAll(aggregateCategories);
+            UnsafeUtils.getFieldValue(RecipeBookManager.class, "TYPE_CATEGORIES", Map.class).putAll(typeCategories);
+            UnsafeUtils.getFieldValue(RecipeBookManager.class, "RECIPE_CATEGORY_LOOKUPS", Map.class).putAll(recipeCategoryLookups);
 
-            HashMap<ResourceLocation, DimensionSpecialEffects> effects = new HashMap();
-            DimensionSpecialEffectsManager.DEFAULT_EFFECTS = preRegisterVanillaEffects(effects);
-            HashMap<ResourceLocation, DimensionSpecialEffects> effectsD = new HashMap(effects);
-            effectsD.putAll(DimensionSpecialEffectsManager.EFFECTS);
-            modContainer.acceptEvent(new RegisterDimensionSpecialEffectsEvent(effectsD));
-            DimensionSpecialEffectsManager.EFFECTS = ImmutableMap.copyOf(effectsD);
+            try {
+                MethodHandle preRegisterVanillaEffectsMH = lookup.findStatic(DimensionSpecialEffectsManager.class, "preRegisterVanillaEffects", MethodType.methodType(DimensionSpecialEffects.class, Map.class));
+                HashMap<ResourceLocation, DimensionSpecialEffects> effects = new HashMap();
+                DimensionSpecialEffects defaultEffects = (DimensionSpecialEffects) preRegisterVanillaEffectsMH.invoke(effects);
+                UnsafeUtils.setFieldValue(DimensionSpecialEffectsManager.class, "DEFAULT_EFFECTS", defaultEffects);
+                HashMap<ResourceLocation, DimensionSpecialEffects> effectsD = new HashMap(effects);
+                effectsD.putAll((Map) UnsafeUtils.getFieldValue(DimensionSpecialEffectsManager.class, "EFFECTS", Map.class));
+                modContainer.acceptEvent(new RegisterDimensionSpecialEffectsEvent(effectsD));
+                UnsafeUtils.setFieldValue(DimensionSpecialEffectsManager.class, "EFFECTS", ImmutableMap.copyOf(effectsD));
+            } catch (Throwable e) {
+                LOGGER.error("Failed to register dimension special effects.", e);
+            }
 
-            HashMap<ResourceLocation, RenderTypeGroup> renderTypes = new HashMap();
-            preRegisterVanillaRenderTypes(renderTypes);
-            HashMap<ResourceLocation, RenderTypeGroup> renderTypesD = new HashMap(renderTypes);
-            renderTypesD.putAll(renderTypes);
-            modContainer.acceptEvent(new RegisterNamedRenderTypesEvent(renderTypesD));
-            NamedRenderTypeManager.RENDER_TYPES = ImmutableMap.copyOf(renderTypesD);
+            try {
+                MethodHandle preRegisterVanillaRenderTypesMH = lookup.findStatic(NamedRenderTypeManager.class, "preRegisterVanillaRenderTypes", MethodType.methodType(void.class, Map.class));
+                HashMap<ResourceLocation, RenderTypeGroup> renderTypes = new HashMap();
+                preRegisterVanillaRenderTypesMH.invoke(renderTypes);
+                HashMap<ResourceLocation, RenderTypeGroup> renderTypesD = new HashMap(renderTypes);
+                renderTypesD.putAll((Map) UnsafeUtils.getFieldValue(NamedRenderTypeManager.class, "RENDER_TYPES", Map.class));
+                modContainer.acceptEvent(new RegisterNamedRenderTypesEvent(renderTypesD));
+                UnsafeUtils.setFieldValue(NamedRenderTypeManager.class, "RENDER_TYPES", ImmutableMap.copyOf(renderTypesD));
+            } catch (Throwable e) {
+                LOGGER.error("Failed to register named render types.", e);
+            }
 
-            ImmutableList.Builder<ColorResolver> builder = ImmutableList.builder();
-            builder.addAll(ColorResolverManager.colorResolvers.stream().toList());
-            modContainer.acceptEvent(new RegisterColorHandlersEvent.ColorResolvers(builder));
-            ColorResolverManager.colorResolvers = builder.build();
+            try {
+                ImmutableList.Builder<ColorResolver> builder = ImmutableList.builder();
+                List<ColorResolver> resolvers = UnsafeUtils.getFieldValue(ColorResolverManager.class, "colorResolvers", List.class);
+                builder.addAll(resolvers.stream().toList());
+                modContainer.acceptEvent(new RegisterColorHandlersEvent.ColorResolvers(builder));
+                UnsafeUtils.setFieldValue(ColorResolverManager.class, "colorResolvers", builder.build());
+            } catch (Throwable e) {
+                LOGGER.error("Failed to register color resolvers.", e);
+            }
 
-            Map<ResourceKey<WorldPreset>, PresetEditor> gatheredEditors = new HashMap(PresetEditorManager.editors);
-            PresetEditor.EDITORS.forEach((k, v) -> k.ifPresent((key) -> gatheredEditors.put(key, v)));
-            modContainer.acceptEvent(new RegisterPresetEditorsEvent(gatheredEditors));
-            PresetEditorManager.editors = gatheredEditors;
+            try {
+                Map editorsMap = UnsafeUtils.getFieldValue(PresetEditorManager.class, "editors", Map.class);
+                Map<ResourceKey<WorldPreset>, PresetEditor> gatheredEditors = new HashMap(editorsMap);
+                PresetEditor.EDITORS.forEach((k, v) -> k.ifPresent((key) -> gatheredEditors.put(key, v)));
+                modContainer.acceptEvent(new RegisterPresetEditorsEvent(gatheredEditors));
+                UnsafeUtils.setFieldValue(PresetEditorManager.class, "editors", gatheredEditors);
+            } catch (Throwable e) {
+                LOGGER.error("Failed to register preset editors.", e);
+            }
 
-            ModLoader.postEvent(new RegisterMapDecorationRenderersEvent(RENDERERS));
+            modContainer.acceptEvent(new RegisterMapDecorationRenderersEvent(UnsafeUtils.getFieldValue(MapDecorationRendererManager.class, "RENDERERS", Map.class)));
 
             modContainer.acceptEvent(new SoundEngineLoadEvent(Minecraft.getInstance().soundManager.soundEngine));
             modContainer.acceptEvent(new RegisterRenderBuffersEvent(Minecraft.getInstance().renderBuffers.bufferSource.fixedBuffers));
@@ -432,20 +461,32 @@ public final class Injector {
     }
 
     public static void registerGametests(ModContainer modContainer) {
-        if (isGametestEnabled()) {
-            Set<String> enabledNamespaces = GameTestHooks.getEnabledNamespaces();
-            LOGGER.info("Enabled Gametest Namespaces: {}", enabledNamespaces);
-            Set<Method> gameTestMethods = new HashSet();
-            RegisterGameTestsEvent event = new RegisterGameTestsEvent(gameTestMethods);
-            modContainer.acceptEvent(event);
-            ModList.get().getAllScanData().stream().map(ModFileScanData::getAnnotations).flatMap(Collection::stream).filter((a) -> GAME_TEST_HOLDER.equals(a.annotationType())).forEach((a) -> addGameTestMethods(a, gameTestMethods));
+        try {
+            MethodHandle isGametestEnabledMH = lookup.findStatic(GameTestHooks.class, "isGametestEnabled", MethodType.methodType(boolean.class));
+            if ((boolean) isGametestEnabledMH.invoke()) {
+                MethodHandle getEnabledNamespacesMH = lookup.findStatic(GameTestHooks.class, "getEnabledNamespaces", MethodType.methodType(Set.class));
+                Set<String> enabledNamespaces = (Set<String>) getEnabledNamespacesMH.invoke();
+                LOGGER.info("Enabled Gametest Namespaces: {}", enabledNamespaces);
+                Set<Method> gameTestMethods = new HashSet();
+                RegisterGameTestsEvent event = new RegisterGameTestsEvent(gameTestMethods);
+                modContainer.acceptEvent(event);
+                Object gameTestHolderAnnotation = UnsafeUtils.getFieldValue(GameTestHooks.class, "GAME_TEST_HOLDER", Object.class);
+                MethodHandle addGameTestMethodsMH = lookup.findStatic(GameTestHooks.class, "addGameTestMethods", MethodType.methodType(void.class, ModFileScanData.AnnotationData.class, Set.class));
+                ModList.get().getAllScanData().stream().map(ModFileScanData::getAnnotations).flatMap(Collection::stream).filter((a) -> gameTestHolderAnnotation.equals(a.annotationType())).forEach((a) -> {
+                    try {
+                        addGameTestMethodsMH.invoke(a, gameTestMethods);
+                    } catch (Throwable ex) {
+                        throw new RuntimeException(ex);
+                    }
+                });
 
-            for(Method gameTestMethod : gameTestMethods) {
-                GameTestRegistry.register(gameTestMethod, enabledNamespaces);
+                for (Method gameTestMethod : gameTestMethods) {
+                    GameTestRegistry.register(gameTestMethod, enabledNamespaces);
+                }
             }
-
+        } catch (Throwable e) {
+            LOGGER.error("Failed to register gametests.", e);
         }
-
     }
 
     private static void setNotPrepared(IMixinConfig config) throws IllegalAccessException, NoSuchFieldException {
@@ -482,7 +523,6 @@ public final class Injector {
 
     private static void addIntoResManager(IModFile modFile) {
         Minecraft mc = Minecraft.getInstance();
-
         modResourcePacks.put(modFile,ResourcePackLoader.createPackForMod(modFile.getModFileInfo()));
 
         ResourcePackLoader.populatePackRepository(mc.resourcePackRepository, PackType.CLIENT_RESOURCES, false);
